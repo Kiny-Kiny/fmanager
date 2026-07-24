@@ -443,10 +443,10 @@ private fun EstiloDoJogador(slot: Slot, pos: PosicaoFase, jogador: Jogador?) {
         disponiveis.forEach { estilo ->
             val ativo = slot.estilo == estilo
             Surface(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                onClick = { slot.estilo = if (ativo) null else estilo },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 shape = MaterialTheme.shapes.medium,
                 color = if (ativo) Destaque.copy(alpha = .16f) else GramadoClaro,
-                onClick = { slot.estilo = if (ativo) null else estilo },
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(estilo.rotulo,

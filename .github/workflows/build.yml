@@ -26,16 +26,52 @@ jobs:
       - name: Instalar o SDK do Android
         uses: android-actions/setup-android@v3
 
+      # Versão fixada: o AGP 8.5.2 não suporta Gradle 9.
       - name: Preparar o Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
-      # O projeto não tem gradlew (é um binário que não dá pra versionar
-      # à mão). Este passo gera ele a partir do Gradle já instalado.
-      - name: Gerar o wrapper do Gradle
-        run: gradle wrapper --gradle-version 8.9
-
+      # Salva o log num arquivo pra poder filtrar depois, e ainda mostra
+      # tudo na tela normalmente.
       - name: Compilar o APK de debug
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        id: compilar
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon 2>&1 | tee build.log
+
+      # Se falhou, imprime SÓ os erros do Kotlin, num bloco curto que dá
+      # pra ler e copiar do celular sem rolar log de mil linhas.
+      - name: Erros de compilação
+        if: steps.compilar.outcome == 'failure'
+        run: |
+          echo "=================================================="
+          echo "         ERROS ENCONTRADOS — COPIE DAQUI"
+          echo "=================================================="
+          echo ""
+          grep -E "^e: |^w: .*error|error:" build.log \
+            | sed 's|file:///home/runner/work/[^/]*/[^/]*/||' \
+            | sort -u \
+            | head -60
+          echo ""
+          echo "=================================================="
+          echo "Total de erros:"
+          grep -c "^e: " build.log || echo "0"
+          echo "=================================================="
+          echo ""
+          echo "--- Tarefa que falhou ---"
+          grep -E "^> Task .*FAILED|^FAILURE:|What went wrong" -A4 build.log | head -25
+          exit 1
+
+      # Guarda o log completo como anexo, caso o filtro não pegue algo.
+      - name: Guardar o log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14
 
       # Fica disponível na aba Actions, dentro da execução, por 90 dias.
       # Baixa como .zip — qualquer gerenciador de arquivos do Android abre.

@@ -251,7 +251,7 @@ object ImportadorApi {
             golMergulho = num("diving"),
             golDefesaMao = num("handling"),
             golChute = num("kicking"),
-            golPosicionamento = num("positioning"),
+            golPosicionamento = num("gk positioning"),
             golReflexo = num("reflexes"),
 
             // O pulo do gato: a URL da carta do jogador.
