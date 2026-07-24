@@ -316,8 +316,10 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun salarioDe(alvo: Jogador): Long =
-        Transferencias.salarioExigido(alvo, _estado.value.clube ?: return alvo.salarioEur)
+    fun salarioDe(alvo: Jogador): Long {
+        val clube = _estado.value.clube ?: return alvo.salarioEur
+        return Transferencias.salarioExigido(alvo, clube)
+    }
 }
 
 /** Formação inicial do jogador e das equipes controladas pela IA. */

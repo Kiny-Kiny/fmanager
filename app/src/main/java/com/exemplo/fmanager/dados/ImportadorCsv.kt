@@ -61,7 +61,16 @@ object ImportadorCsv {
                     j.copy(clubeId = idPorClube[nomeClube])
                 }
 
-                db.ligas().inserirTodas(ligas)
+                // Reputação real = média dos clubes da liga.
+                val ligasAjustadas = ligas.map { liga ->
+                    val daLiga = clubes.filter { it.ligaId == liga.id }
+                    if (daLiga.isEmpty()) liga
+                    else liga.copy(
+                        reputacao = daLiga.map { it.reputacao }.average().toInt()
+                    )
+                }
+
+                db.ligas().inserirTodas(ligasAjustadas)
                 db.clubes().inserirTodos(clubes)
                 db.jogadores().inserirTodos(comClube)
                 db.contratos().salvarTodos(gerarContratos(comClube))
@@ -215,6 +224,28 @@ object ImportadorCsv {
         }
         campos += atual.toString()
         return campos
+    }
+
+    // ---------------------------------------------------- REPUTAÇÃO
+
+    /**
+     * Reputação inicial da liga pelo nome. É só um ponto de partida:
+     * logo depois da importação a reputação é recalculada pela média
+     * dos clubes, que é bem mais confiável que uma tabela fixa.
+     */
+    private fun reputacaoDaLiga(nome: String): Int {
+        val n = nome.lowercase()
+        return when {
+            listOf("premier league", "laliga", "la liga", "serie a",
+                "bundesliga", "ligue 1").any { it in n } -> 85
+            listOf("eredivisie", "liga portugal", "primeira liga",
+                "premier liga", "russian").any { it in n } -> 72
+            listOf("brasileir", "argentin", "liga mx", "major league",
+                "mls", "süper lig", "super lig").any { it in n } -> 68
+            listOf("2. bundesliga", "championship", "serie b",
+                "ligue 2", "laliga 2", "segunda").any { it in n } -> 60
+            else -> 50
+        }
     }
 
     // --------------------------------------------------- CONTRATOS
