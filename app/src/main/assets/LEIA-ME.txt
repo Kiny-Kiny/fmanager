@@ -1,0 +1,16 @@
+COLOQUE O CSV AQUI
+
+1. Baixe um dataset de jogadores do EA FC no Kaggle
+   (procure por "EAFC 26 Player Database" ou "EA Sports FC complete player dataset")
+
+2. Renomeie o arquivo para:  jogadores.csv
+
+3. Coloque nesta pasta (app/src/main/assets/jogadores.csv)
+
+4. Rode o app. Na primeira abertura ele importa tudo para o
+   SQLite e nunca mais lê o CSV. Da segunda vez em diante,
+   o app abre instantaneamente.
+
+Se o app reclamar de coluna faltando, abra o CSV, veja o cabecalho
+e acrescente o nome da coluna na lista de apelidos correspondente
+em dados/ImportadorCsv.kt.

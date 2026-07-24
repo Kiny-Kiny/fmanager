@@ -1,0 +1,60 @@
+name: Gerar APK
+
+# Roda quando você envia código, e também no botão manual da aba Actions.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Instala o SDK do Android na máquina do GitHub. É x86_64, então
+      # as build-tools oficiais funcionam sem gambiarra — que é
+      # exatamente o problema que a gente evita não compilando no celular.
+      - name: Instalar o SDK do Android
+        uses: android-actions/setup-android@v3
+
+      - name: Preparar o Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # O projeto não tem gradlew (é um binário que não dá pra versionar
+      # à mão). Este passo gera ele a partir do Gradle já instalado.
+      - name: Gerar o wrapper do Gradle
+        run: gradle wrapper --gradle-version 8.9
+
+      - name: Compilar o APK de debug
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # Fica disponível na aba Actions, dentro da execução, por 90 dias.
+      # Baixa como .zip — qualquer gerenciador de arquivos do Android abre.
+      - name: Guardar o APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FManager-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 90
+
+      # Publica também como release, que baixa direto em um toque,
+      # sem precisar descompactar nada no celular.
+      - name: Publicar como release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: FManager build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/*.apk
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
