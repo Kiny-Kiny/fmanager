@@ -337,7 +337,11 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             usados += j.id
             JogadorEmCampo(j, slot, entrosamento.porJogador[slot.id] ?: 50)
         }
-        return TimeEmCampo(clubeId, nome, emCampo, tatica)
+        // Reservas: quem sobrou do elenco, os melhores primeiro.
+        val banco = elenco.filter { it.id !in usados }
+            .sortedByDescending { it.geral }
+            .take(9)
+        return TimeEmCampo(clubeId, nome, emCampo, tatica, banco)
     }
 
     // ------------------------------------------ PARTIDA AO VIVO

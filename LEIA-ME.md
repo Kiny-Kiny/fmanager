@@ -97,7 +97,51 @@ defesa, resistência, drible — com teto de +32% para ninguém virar
 sobre-humano acumulando traços.
 
 
+## Motor de partida — cadeia de posse
+
+**A bola sempre pertence a um jogador.** Nada acontece por conta própria:
+todo lance é a decisão de quem está com ela — passar, conduzir, driblar
+ou chutar. O adversário mais próximo tenta interceptar ou desarmar, e aí
+pode sair falta.
+
+Isso resolveu três problemas de uma vez:
+
+- os passes deixaram de ser estranhos, porque **existem de verdade**
+- a narração ganhou autor em cada linha
+- faltas, pênaltis e impedimentos passaram a ter onde acontecer
+
+O relógio anda **por lance**, não em passos fixos: um toque leva 3s, uma
+falta cobrada leva 30s, um gol leva quase um minuto com a comemoração.
+Uma partida dá entre 800 e 1200 lances, o que bate com o futebol real.
+
+A decisão do portador sai dos atributos dele, de onde está no campo e das
+instruções que você deu. Um ponta com drible alto e liberdade criativa
+alta encara; um volante com passe alto procura o lançamento.
+
+### Faltas, cartões e pênaltis
+
+Desarme que falha pode virar falta, com chance vinda da agressividade do
+defensor. Onde a falta aconteceu decide o que vem depois:
+
+- dentro da área e no miolo → **pênalti**, batido por quem tem o melhor
+  atributo de pênaltis
+- fora da área mas adiantada → chance de **cobrança direta**, com curva e
+  precisão de falta contando, e 28% de bater na barreira
+- resto do campo → reposição simples
+
+Segundo amarelo expulsa, e o time joga com um menos de verdade — a peça
+sai do campo e das contas de força.
+
+### Simulação instantânea usa o mesmo motor
+
+`MotorPartida.simular()` é literalmente `PartidaAoVivo().pularParaOFim()`.
+Uma partida assistida e uma simulada seguem exatamente as mesmas regras,
+então nunca dá aquela sensação de que simular "dá outro resultado".
+
 ## Partida ao vivo
+
+Quem tem a bola aparece com um anel, e cada passe desenha uma linha da
+origem ao destino — dá para acompanhar a construção da jogada.
 
 Dois laços rodam em paralelo na tela da partida:
 
@@ -110,10 +154,14 @@ de `COM_POSSE`; quando defende, para `SEM_POSSE`. Você vê a 4-2-3-1
 virar 3-2-5 em tempo real, porque é literalmente a mesma estrutura de
 dados que você desenhou.
 
-Velocidades: 4 minutos, 2 minutos, 30 segundos, ou **Pular** (resolve
-tudo instantaneamente). Pausar a qualquer momento. O botão **Táticas**
-abre os controles no meio do jogo — a mudança recalcula as forças e vale
-do próximo lance em diante.
+Velocidades: lance a lance, normal, rápido, ou **Pular**. Pausar a
+qualquer momento. O botão **Táticas** abre os controles no meio do jogo.
+O botão **Substituir** pausa a partida e mostra quem está em campo com o
+gás de cada um, mais o banco — 5 substituições, e o reserva herda o slot,
+as instruções e o estilo de quem saiu.
+
+A narração tem filtro: "só destaques" esconde os toques de rotina e deixa
+gols, faltas, dribles, cartões e chutes.
 
 **Performance:** as posições animadas ficam num `HashMap` comum, fora do
 sistema de estado do Compose. O redesenho é disparado por um único
@@ -250,11 +298,9 @@ entre fases chega ao fim do jogo sem pernas — e o risco de lesão sobe.
 ## O que falta
 
 - Competições continentais (a estrutura de copa já suporta, falta popular)
-- Substituições durante a partida
 - Salvar a formação no banco — hoje ela vive só na memória
 - Renovação de contrato e jogadores livres
 - Passagem de temporada (promoção, rebaixamento, envelhecimento do elenco)
-- Substituições durante a partida
 - Balanceamento: os números do motor são um ponto de partida, não estão afinados
 
 ## Ajustando o motor

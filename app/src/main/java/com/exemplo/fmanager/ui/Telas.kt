@@ -22,7 +22,8 @@ import com.exemplo.fmanager.EstadoJogo
 import com.exemplo.fmanager.JogoViewModel
 import com.exemplo.fmanager.dados.*
 import com.exemplo.fmanager.formacao.*
-import com.exemplo.fmanager.motor.Evento
+import com.exemplo.fmanager.motor.Importancia
+import com.exemplo.fmanager.motor.Lance
 import com.exemplo.fmanager.sistemas.*
 import kotlinx.coroutines.launch
 
@@ -598,28 +599,45 @@ fun TelaPartida(e: EstadoJogo) {
                 style = MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.Bold, color = Texto)
             Spacer(Modifier.height(4.dp))
-            Text("Posse ${r.posseMandante}% · " +
-                    "${r.chutesMandante} x ${r.chutesVisitante} finalizações",
-                style = MaterialTheme.typography.bodySmall, color = TextoFraco)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
+            val a = r.statsMandante
+            val b = r.statsVisitante
+            listOf(
+                "Posse" to ("${a.posse}%" to "${b.posse}%"),
+                "Finalizações" to ("${a.chutes}" to "${b.chutes}"),
+                "No gol" to ("${a.chutesNoGol}" to "${b.chutesNoGol}"),
+                "Precisão de passe" to
+                        ("${a.precisaoPasse}%" to "${b.precisaoPasse}%"),
+                "Faltas" to ("${a.faltas}" to "${b.faltas}"),
+                "Cartões" to
+                        ("${a.amarelos + a.vermelhos}" to "${b.amarelos + b.vermelhos}"),
+                "Impedimentos" to ("${a.impedimentos}" to "${b.impedimentos}"),
+                "Desarmes" to ("${a.desarmes}" to "${b.desarmes}"),
+            ).forEach { (rotulo, valores) ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                    Text(valores.first, Modifier.width(52.dp),
+                        style = MaterialTheme.typography.bodySmall, color = Texto)
+                    Text(rotulo, Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall, color = TextoFraco)
+                    Text(valores.second,
+                        style = MaterialTheme.typography.bodySmall, color = Texto)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
         }
 
-        items(r.eventos) { ev ->
-            val (texto, cor) = when (ev) {
-                is Evento.Gol -> "⚽ ${ev.autor}" +
-                        (ev.assistencia?.let { " (assist. $it)" } ?: "") to Destaque
-                is Evento.Cartao ->
-                    (if (ev.vermelho) "🟥 " else "🟨 ") + ev.autor to
-                            (if (ev.vermelho) Erro else Alerta)
-                is Evento.Lesao -> "✚ ${ev.autor} (${ev.semanas} sem.)" to Erro
-                is Evento.Chute -> null to TextoFraco
-            }
-            texto?.let {
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    Text("${ev.minuto}'", Modifier.width(40.dp),
-                        color = TextoFraco, style = MaterialTheme.typography.bodySmall)
-                    Text(it, color = cor, style = MaterialTheme.typography.bodyMedium)
-                }
+        // Só os lances que importam — o resumo do jogo, não a fita toda.
+        items(r.lances.filter { it.importancia != Importancia.ROTINA }) { l ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Text("${l.minuto}'", Modifier.width(40.dp),
+                    color = TextoFraco, style = MaterialTheme.typography.bodySmall)
+                Text(l.narrar(),
+                    color = when (l.importancia) {
+                        Importancia.DECISIVO -> Destaque
+                        Importancia.DESTAQUE -> Texto
+                        else -> TextoFraco
+                    },
+                    style = MaterialTheme.typography.bodyMedium)
             }
         }
         item { Spacer(Modifier.height(24.dp)) }
