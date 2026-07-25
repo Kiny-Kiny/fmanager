@@ -97,6 +97,79 @@ defesa, resistência, drible — com teto de +32% para ninguém virar
 sobre-humano acumulando traços.
 
 
+
+## Design
+
+A direção é uma **prancheta de técnico à noite**: fundo quase preto com um
+verde-piscina frio, e o número em destaque sempre pesado. App de esporte
+vive de número grande.
+
+Decisões que sustentam isso, em `Design.kt`:
+
+- **Hierarquia por peso, não por cor.** Placar em `FontWeight.Black` com
+  espaçamento negativo de -2sp; rótulos de seção em caixa alta 10sp com
+  espaçamento +1.4sp. O contraste vem dessa distância, não de encher a
+  tela de cores.
+- **Sem fonte customizada de propósito.** Arquivo de fonte pesa no APK, e
+  o contraste de peso já dá a personalidade.
+- **Identidade do clube derivada do nome.** O dataset não traz cor, então
+  um hash estável do nome escolhe uma cor numa paleta curada. O mesmo
+  clube sempre recebe a mesma cor, e nenhuma sai feia porque nenhuma é
+  sorteada livremente.
+- **Faixa da carta pelo overall** — bronze abaixo de 65, prata até 74,
+  ouro até 83, elite acima. Quando o jogador está fora da posição, a
+  moldura vira laranja ou vermelha: a informação mais importante da tela
+  de escalação virou parte do desenho, não um texto ao lado.
+
+`Componentes.kt` tem as peças reutilizáveis: carta de jogador, barra de
+atributo, barra comparativa entre times, sequência de forma (V/E/D),
+selo, cartão de número e linha de elenco.
+
+## Painel da carreira
+
+A home deixou de ser lista de links e virou painel. De cara aparecem:
+
+- cabeçalho com gradiente na cor do clube, posição atual contra a meta
+- **confiança da diretoria** com barra e situação (seguro → ameaçado)
+- forma dos últimos 5 jogos
+- próximo compromisso, com assistir ou simular
+- mensagens urgentes da caixa de entrada
+- artilheiros do elenco em carrossel
+
+Navegação principal na **barra de baixo** (Painel, Time, Táticas, Mercado,
+Caixa), com contador de urgentes na caixa de entrada.
+
+## Diretoria
+
+O que a diretoria espera sai da reputação do clube **em relação à liga**.
+Assumir o lanterna e terminar no meio da tabela é sucesso; assumir o
+favorito e terminar em quinto é fracasso. É essa relação que dá sentido a
+começar pequeno.
+
+A confiança pesa a diferença entre onde você está e onde deveria estar, e
+**amadurece conforme a temporada avança** — errar na terceira rodada custa
+menos que errar na trigésima.
+
+## Caixa de entrada
+
+Mensagens de diretoria, olheiro, departamento médico, contratos, imprensa
+e mercado.
+
+As notícias **não são armazenadas**: são derivadas do estado do jogo cada
+vez que a tela abre. Evita mais uma tabela e garante que nada fique
+obsoleto — se o jogador se recuperou, a mensagem sobre a lesão deixa de
+existir sozinha.
+
+## Artilharia
+
+Tabela nova no banco (`estatisticas`), com gols, assistências, jogos,
+cartões e média de nota por temporada.
+
+Entrou por **migração explícita 1 → 2**, não por recriação. Adicionar
+tabela é operação segura; recriar o banco apagaria os 16 mil jogadores
+importados e obrigaria a esperar a importação inteira de novo. A migração
+está em `AppDatabase.MIGRACAO_1_2`.
+
 ## Motor de partida — cadeia de posse
 
 **A bola sempre pertence a um jogador.** Nada acontece por conta própria:

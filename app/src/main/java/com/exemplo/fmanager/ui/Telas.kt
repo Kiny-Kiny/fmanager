@@ -16,8 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.layout.ContentScale
-import coil.compose.AsyncImage
 import com.exemplo.fmanager.EstadoJogo
 import com.exemplo.fmanager.JogoViewModel
 import com.exemplo.fmanager.dados.*
@@ -28,117 +26,6 @@ import com.exemplo.fmanager.sistemas.*
 import kotlinx.coroutines.launch
 
 // ------------------------------------------------------------- INÍCIO
-
-@Composable
-fun TelaInicio(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Spacer(Modifier.height(16.dp))
-            Text(e.clube?.nome ?: "—",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold, color = Texto)
-            Text("Temporada ${e.carreira?.temporada} · Rodada ${e.carreira?.rodada}",
-                style = MaterialTheme.typography.bodyMedium, color = TextoFraco)
-            if (e.estiloHerdado.isNotBlank()) {
-                Text("Estilo herdado do clube: ${e.estiloHerdado}",
-                    style = MaterialTheme.typography.labelSmall, color = Destaque)
-            }
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Cartao("Caixa", formatarEuro(e.caixa), Modifier.weight(1f))
-                Cartao("Folha semanal", formatarEuro(e.folha), Modifier.weight(1f))
-            }
-        }
-
-        item {
-            e.entrosamento?.let { ent ->
-                Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
-                    color = SuperficieAlta) {
-                    Column(Modifier.padding(14.dp)) {
-                        Row {
-                            Text("Entrosamento do time", Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextoFraco)
-                            Text("${ent.media}%", color = when {
-                                ent.media >= 70 -> Destaque
-                                ent.media >= 40 -> Alerta
-                                else -> Erro
-                            }, style = MaterialTheme.typography.labelLarge)
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = { ent.media / 100f },
-                            modifier = Modifier.fillMaxWidth().height(5.dp),
-                            color = Destaque,
-                            trackColor = TextoFraco.copy(alpha = .18f),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text("${ent.ligacoes.size} ligações por clube, liga ou seleção. " +
-                                "Jogadores próximos no campo se ligam melhor.",
-                            style = MaterialTheme.typography.bodySmall, color = TextoFraco)
-                    }
-                }
-            }
-        }
-
-        item {
-            e.proximaPartida?.let { p ->
-                Surface(
-                    Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
-                    color = SuperficieAlta,
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("PRÓXIMO JOGO",
-                            style = MaterialTheme.typography.labelSmall, color = TextoFraco)
-                        Spacer(Modifier.height(6.dp))
-                        val emCasa = p.mandanteId == e.clube?.id
-                        Text(if (emCasa) "Em casa" else "Fora de casa",
-                            style = MaterialTheme.typography.titleMedium, color = Texto)
-                        Spacer(Modifier.height(12.dp))
-                        val escopo = rememberCoroutineScope()
-                        Button(
-                            onClick = {
-                                escopo.launch {
-                                    if (vm.prepararAoVivo(daCopa = false) != null) {
-                                        irPara("aovivo")
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Assistir a partida") }
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = { vm.jogarProximaPartida(); irPara("partida") },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Simular direto") }
-                    }
-                }
-            } ?: Text("Temporada encerrada.", color = TextoFraco)
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    "escalacao" to "Escalação e cartas",
-                    "elenco" to "Elenco",
-                    "copa" to "Copa nacional",
-                    "taticas" to "Táticas e formação por fase",
-                    "mercado" to "Mercado de transferências",
-                    "treino" to "Centro de treinamento",
-                    "tabela" to "Classificação",
-                ).forEach { (rota, rotulo) ->
-                    ItemMenu(rotulo) { irPara(rota) }
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-}
 
 // ------------------------------------------------------------- ELENCO
 
@@ -183,23 +70,7 @@ private fun LinhaJogador(j: Jogador, papel: Papel?, contrato: Contrato?) {
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // A carta vem da API; se faltar, cai no círculo com o overall.
-                if (j.urlFoto != null) {
-                    AsyncImage(
-                        model = j.urlFoto,
-                        contentDescription = j.nome,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(42.dp).clip(CircleShape),
-                    )
-                } else {
-                    Box(
-                        Modifier.size(38.dp).clip(CircleShape).background(Destaque),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("${j.geral}", fontWeight = FontWeight.Bold,
-                            color = Superficie)
-                    }
-                }
+                CartaJogador(j, 46.dp, papel)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(j.nome, color = Texto,
@@ -225,15 +96,18 @@ private fun LinhaJogador(j: Jogador, papel: Papel?, contrato: Contrato?) {
                 HorizontalDivider(color = TextoFraco.copy(alpha = .2f))
                 Spacer(Modifier.height(12.dp))
 
-                Atributo("Velocidade", j.velocidade)
-                Atributo("Finalização", j.finalizacao)
-                Atributo("Passe baixo", j.passeBaixo)
-                Atributo("Passe alto", j.passeAlto)
-                Atributo("Drible", j.drible)
-                Atributo("Controle de bola", j.controleBola)
-                Atributo("Roubo de bola", j.rouboBola)
-                Atributo("Contato físico", j.contatoFisico)
-                Atributo("Resistência", j.resistencia)
+                BarraAtributo("Velocidade", j.velocidade)
+                BarraAtributo("Aceleração", j.aceleracao)
+                BarraAtributo("Finalização", j.finalizacao)
+                BarraAtributo("Passe baixo", j.passeBaixo)
+                BarraAtributo("Passe alto", j.passeAlto)
+                BarraAtributo("Visão", j.visao)
+                BarraAtributo("Drible", j.drible)
+                BarraAtributo("Controle de bola", j.controleBola)
+                BarraAtributo("Roubo de bola", j.rouboBola)
+                BarraAtributo("Consciência def.", j.consciencaDef)
+                BarraAtributo("Contato físico", j.contatoFisico)
+                BarraAtributo("Resistência", j.resistencia)
 
                 val tracos = j.tracos()
                 if (tracos.isNotEmpty()) {
@@ -271,26 +145,6 @@ private fun LinhaJogador(j: Jogador, papel: Papel?, contrato: Contrato?) {
     }
 }
 
-@Composable
-private fun Atributo(nome: String, valor: Int) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Text(nome, style = MaterialTheme.typography.bodySmall,
-            color = TextoFraco, modifier = Modifier.width(130.dp))
-        LinearProgressIndicator(
-            progress = { valor / 100f },
-            modifier = Modifier.weight(1f).height(5.dp),
-            color = when {
-                valor >= 80 -> Destaque
-                valor >= 65 -> Alerta
-                else -> TextoFraco
-            },
-            trackColor = TextoFraco.copy(alpha = .18f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text("$valor", style = MaterialTheme.typography.bodySmall, color = Texto)
-    }
-}
 
 // ------------------------------------------------------------ TÁTICAS
 
@@ -646,30 +500,4 @@ fun TelaPartida(e: EstadoJogo) {
 
 // ----------------------------------------------------------- AUXILIAR
 
-@Composable
-private fun Cartao(rotulo: String, valor: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = MaterialTheme.shapes.medium, color = SuperficieAlta) {
-        Column(Modifier.padding(14.dp)) {
-            Text(rotulo, style = MaterialTheme.typography.labelSmall, color = TextoFraco)
-            Spacer(Modifier.height(4.dp))
-            Text(valor, style = MaterialTheme.typography.titleMedium, color = Texto)
-        }
-    }
-}
 
-@Composable
-private fun ItemMenu(rotulo: String, aoClicar: () -> Unit) {
-    Surface(
-        Modifier.fillMaxWidth().clickable(onClick = aoClicar),
-        shape = MaterialTheme.shapes.medium, color = SuperficieAlta,
-    ) {
-        Text(rotulo, Modifier.padding(16.dp), color = Texto,
-            style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-fun formatarEuro(v: Long): String = when {
-    v >= 1_000_000 -> "€%.1fM".format(v / 1_000_000.0)
-    v >= 1_000 -> "€%.0fK".format(v / 1_000.0)
-    else -> "€$v"
-}

@@ -82,3 +82,42 @@ data class LinhaTabela(
     val saldo get() = golsPro - golsContra
     val pontos get() = vitorias * 3 + empates
 }
+
+/**
+ * Números do jogador na temporada. Tabela nova na versão 2 do banco.
+ *
+ * Entrou por MIGRAÇÃO, não por recriação: adicionar tabela é operação
+ * segura, e destruir o banco custaria a reimportação dos 16 mil
+ * jogadores. Ver AppDatabase.MIGRACAO_1_2.
+ */
+@Entity(
+    tableName = "estatisticas",
+    primaryKeys = ["jogadorId", "temporada"],
+    indices = [Index("temporada"), Index("clubeId")],
+)
+data class EstatisticaJogador(
+    val jogadorId: Int,
+    val temporada: Int,
+    val clubeId: Int,
+    val jogos: Int = 0,
+    val gols: Int = 0,
+    val assistencias: Int = 0,
+    val amarelos: Int = 0,
+    val vermelhos: Int = 0,
+    /** Soma das notas; divida por jogos para a média. */
+    val somaNotas: Float = 0f,
+) {
+    val notaMedia: Float get() = if (jogos == 0) 0f else somaNotas / jogos
+}
+
+/** Linha da tabela de artilharia, já com o nome resolvido. */
+data class Artilheiro(
+    val jogadorId: Int,
+    val nome: String,
+    val clube: String,
+    val urlFoto: String?,
+    val geral: Int,
+    val gols: Int,
+    val assistencias: Int,
+    val jogos: Int,
+)

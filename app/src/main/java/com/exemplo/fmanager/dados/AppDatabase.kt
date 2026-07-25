@@ -2,6 +2,8 @@ package com.exemplo.fmanager.dados
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Dao
 interface ClubeDao {
@@ -86,10 +88,51 @@ interface CarreiraDao {
     suspend fun salvar(carreira: Carreira)
 }
 
+@Dao
+interface EstatisticaDao {
+
+    @Query("SELECT * FROM estatisticas WHERE jogadorId = :id AND temporada = :temporada")
+    suspend fun de(id: Int, temporada: Int): EstatisticaJogador?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun salvar(e: EstatisticaJogador)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun salvarTodas(lista: List<EstatisticaJogador>)
+
+    /** Artilharia da liga inteira, cruzando com os dados do jogador. */
+    @Query("""
+        SELECT e.jogadorId AS jogadorId, j.nome AS nome, j.clube AS clube,
+               j.urlFoto AS urlFoto, j.geral AS geral,
+               e.gols AS gols, e.assistencias AS assistencias, e.jogos AS jogos
+        FROM estatisticas e
+        JOIN jogadores j ON j.id = e.jogadorId
+        WHERE e.temporada = :temporada AND e.gols > 0
+        ORDER BY e.gols DESC, e.assistencias DESC
+        LIMIT :limite
+    """)
+    suspend fun artilheiros(temporada: Int, limite: Int = 20): List<Artilheiro>
+
+    @Query("""
+        SELECT e.jogadorId AS jogadorId, j.nome AS nome, j.clube AS clube,
+               j.urlFoto AS urlFoto, j.geral AS geral,
+               e.gols AS gols, e.assistencias AS assistencias, e.jogos AS jogos
+        FROM estatisticas e
+        JOIN jogadores j ON j.id = e.jogadorId
+        WHERE e.temporada = :temporada AND e.clubeId = :clubeId
+        ORDER BY e.gols DESC, e.assistencias DESC
+        LIMIT :limite
+    """)
+    suspend fun doClube(
+        temporada: Int, clubeId: Int, limite: Int = 30,
+    ): List<Artilheiro>
+}
+
 @Database(
     entities = [Jogador::class, Clube::class, Liga::class,
-        Contrato::class, Partida::class, Carreira::class],
-    version = 1,
+        Contrato::class, Partida::class, Carreira::class,
+        EstatisticaJogador::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,9 +142,44 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun contratos(): ContratoDao
     abstract fun partidas(): PartidaDao
     abstract fun carreira(): CarreiraDao
+    abstract fun estatisticas(): EstatisticaDao
 
     companion object {
         @Volatile private var instancia: AppDatabase? = null
+
+        /**
+         * Versão 1 → 2: só cria a tabela de estatísticas.
+         *
+         * Migração explícita em vez de recriar o banco. Recriar apagaria
+         * os 16 mil jogadores importados e obrigaria a esperar a
+         * importação inteira de novo.
+         */
+        private val MIGRACAO_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS estatisticas (
+                        jogadorId INTEGER NOT NULL,
+                        temporada INTEGER NOT NULL,
+                        clubeId INTEGER NOT NULL,
+                        jogos INTEGER NOT NULL DEFAULT 0,
+                        gols INTEGER NOT NULL DEFAULT 0,
+                        assistencias INTEGER NOT NULL DEFAULT 0,
+                        amarelos INTEGER NOT NULL DEFAULT 0,
+                        vermelhos INTEGER NOT NULL DEFAULT 0,
+                        somaNotas REAL NOT NULL DEFAULT 0,
+                        PRIMARY KEY(jogadorId, temporada)
+                    )
+                """)
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_estatisticas_temporada " +
+                            "ON estatisticas(temporada)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_estatisticas_clubeId " +
+                            "ON estatisticas(clubeId)"
+                )
+            }
+        }
 
         fun obter(context: Context): AppDatabase =
             instancia ?: synchronized(this) {
@@ -113,6 +191,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // Se um dia você quiser embutir o banco já pronto
                     // em vez de importar o CSV na primeira execução:
                     // .createFromAsset("fmanager.db")
+                    .addMigrations(MIGRACAO_1_2)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instancia = it }

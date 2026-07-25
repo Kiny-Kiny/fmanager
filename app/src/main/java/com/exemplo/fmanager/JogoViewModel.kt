@@ -41,6 +41,14 @@ data class EstadoJogo(
     val proximaCopa: Partida? = null,
     val faseDaCopa: String = "",
     val viveNaCopa: Boolean = false,
+    // Painel estilo modo carreira
+    val expectativa: Expectativa? = null,
+    val noticias: List<Noticia> = emptyList(),
+    val forma: List<Char> = emptyList(),
+    val artilheirosDoClube: List<Artilheiro> = emptyList(),
+    val artilheirosDaLiga: List<Artilheiro> = emptyList(),
+    val posicao: Int = 0,
+    val totalRodadas: Int = 0,
 )
 
 class JogoViewModel(app: Application) : AndroidViewModel(app) {
@@ -188,6 +196,16 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         val faseAtual = partidasCopa.filter { it.golsMandante == null }
             .minOfOrNull { it.rodada } ?: (partidasCopa.maxOfOrNull { it.rodada } ?: 0)
 
+        val tabelaLiga = Temporada.classificacao(clubesLiga, partidas)
+        val folha = db.contratos().folhaSalarial(clube.id)
+        val expectativa = Diretoria.avaliar(
+            clube = clube, todosDaLiga = clubesLiga, tabela = tabelaLiga,
+            rodadasJogadas = partidas.count { it.golsMandante != null } /
+                    clubesLiga.size.coerceAtLeast(1),
+            totalRodadas = partidas.maxOfOrNull { it.rodada } ?: 1,
+            viveNaCopa = Copa.aindaNaCopa(clube.id, partidasCopa),
+        )
+
         // Preenche a escalação automaticamente com os melhores para cada papel.
         if (slots.isNotEmpty() && slots.all { it.nome.startsWith("Jogador") }) {
             autoEscalar(elenco)
@@ -204,7 +222,7 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             tatica = _estado.value.tatica,
             estiloHerdado = _estado.value.estiloHerdado,
             tetoReputacao = reputacaoMaximaPara(carreira.temporada),
-            tabela = Temporada.classificacao(clubesLiga, partidas),
+            tabela = tabelaLiga,
             proximaPartida = db.partidas()
                 .proximoJogo(carreira.temporada, clube.ligaId, clube.id),
             partidasCopa = partidasCopa,
@@ -214,13 +232,74 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
                 partidasCopa.filter { it.rodada == faseAtual }.size
             ),
             viveNaCopa = Copa.aindaNaCopa(clube.id, partidasCopa),
+            expectativa = expectativa,
+            noticias = CaixaDeEntrada.gerar(
+                clube = clube, temporada = carreira.temporada,
+                rodada = carreira.rodada, elenco = elenco,
+                contratos = contratos, tabela = tabelaLiga,
+                expectativa = expectativa,
+                viveNaCopa = Copa.aindaNaCopa(clube.id, partidasCopa),
+                faseCopa = Copa.nomeDaFase(
+                    partidasCopa.filter { it.rodada == faseAtual }.size),
+                caixa = clube.caixaEur, folha = folha,
+            ),
+            forma = formaRecente(partidas, clube.id),
+            artilheirosDoClube = db.estatisticas()
+                .doClube(carreira.temporada, clube.id),
+            artilheirosDaLiga = db.estatisticas()
+                .artilheiros(carreira.temporada),
+            posicao = tabelaLiga.indexOfFirst { it.clubeId == clube.id } + 1,
+            totalRodadas = partidas.maxOfOrNull { it.rodada } ?: 0,
             ultimoResultado = _estado.value.ultimoResultado,
             entrosamento = CalculadoraEntrosamento.calcular(
                 slots, elenco.associateBy { it.id },
             ),
             caixa = clube.caixaEur,
-            folha = db.contratos().folhaSalarial(clube.id),
+            folha = folha,
         )
+    }
+
+    /** Sequência de V/E/D nos últimos jogos do clube. */
+    private fun formaRecente(partidas: List<Partida>, clubeId: Int): List<Char> =
+        partidas
+            .filter {
+                it.golsMandante != null &&
+                        (it.mandanteId == clubeId || it.visitanteId == clubeId)
+            }
+            .sortedBy { it.rodada }
+            .takeLast(5)
+            .map { p ->
+                val meus = if (p.mandanteId == clubeId) p.golsMandante!! else p.golsVisitante!!
+                val deles = if (p.mandanteId == clubeId) p.golsVisitante!! else p.golsMandante!!
+                when {
+                    meus > deles -> 'V'
+                    meus == deles -> 'E'
+                    else -> 'D'
+                }
+            }
+
+    /** Grava gols, assistências, notas e cartões na tabela da temporada. */
+    private suspend fun registrarEstatisticas(r: Resultado, temporada: Int) {
+        val idsClube = _estado.value.elenco.map { it.id }.toSet()
+        val clubeId = _estado.value.clube?.id ?: return
+
+        val participantes = (r.titularesMandante + r.titularesVisitante)
+            .filter { it in idsClube }.distinct()
+
+        val atualizadas = participantes.map { id ->
+            val anterior = db.estatisticas().de(id, temporada)
+                ?: EstatisticaJogador(id, temporada, clubeId)
+            anterior.copy(
+                jogos = anterior.jogos + 1,
+                gols = anterior.gols + (r.golsPorJogador[id] ?: 0),
+                assistencias = anterior.assistencias +
+                        (r.assistenciasPorJogador[id] ?: 0),
+                amarelos = anterior.amarelos + (if (id in r.amarelosPorJogador) 1 else 0),
+                vermelhos = anterior.vermelhos + (if (id in r.vermelhosPorJogador) 1 else 0),
+                somaNotas = anterior.somaNotas + (r.notas[id] ?: 6f),
+            )
+        }
+        db.estatisticas().salvarTodas(atualizadas)
     }
 
     /** Escala o melhor jogador disponível para cada papel da formação. */
@@ -408,6 +487,8 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
                 (e.carreira ?: return@launch).copy(rodada = partida.rodada + 1)
             )
         }
+
+        registrarEstatisticas(r, partida.temporada)
 
         partidaAoVivo = null
         registroAoVivo = null

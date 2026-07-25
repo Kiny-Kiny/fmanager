@@ -118,7 +118,7 @@ fun TelaEscalacao(
                     Modifier.width(58.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    CartaJogador(j, 46.dp)
+                    CartaJogador(j, 46.dp, mostrarNome = false)
                     Text(j.nome.split(" ").last(),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextoFraco, maxLines = 1)
@@ -286,52 +286,6 @@ private fun CampoComCartas(
     }
 }
 
-/** A carta da API, com moldura pela familiaridade na função. */
-@Composable
-private fun CartaJogador(
-    jogador: Jogador,
-    tamanho: Dp,
-    papel: Papel? = null,
-) {
-    val cor = papel?.let {
-        when {
-            jogador.familiaridade(it).fator >= .94f -> Destaque
-            jogador.familiaridade(it).fator >= .85f -> Alerta
-            else -> Erro
-        }
-    } ?: TextoFraco
-
-    Box(contentAlignment = Alignment.BottomEnd) {
-        if (jogador.urlFoto != null) {
-            AsyncImage(
-                model = jogador.urlFoto,
-                contentDescription = jogador.nome,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(tamanho).clip(CircleShape)
-                    .background(SuperficieAlta),
-            )
-        } else {
-            Box(
-                Modifier.size(tamanho).clip(CircleShape).background(SuperficieAlta),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(jogador.nome.take(2).uppercase(),
-                    style = MaterialTheme.typography.labelMedium, color = Texto)
-            }
-        }
-
-        Surface(shape = CircleShape, color = cor) {
-            Text(
-                "${papel?.let { jogador.geralEm(it) } ?: jogador.geral}",
-                Modifier.padding(horizontal = 4.dp),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = Superficie, fontSize = 9.sp,
-            )
-        }
-    }
-}
-
 @Composable
 private fun OpcaoJogador(
     jogador: Jogador,
@@ -350,7 +304,7 @@ private fun OpcaoJogador(
             Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CartaJogador(jogador, 42.dp, papel)
+            CartaJogador(jogador, 44.dp, papel)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(jogador.nome, color = Texto,

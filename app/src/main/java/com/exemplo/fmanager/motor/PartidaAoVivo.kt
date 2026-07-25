@@ -95,6 +95,12 @@ data class Resultado(
     val statsVisitante: Estatisticas,
     val notas: Map<Int, Float>,
     val gasFinal: Map<Int, Int>,
+    val golsPorJogador: Map<Int, Int> = emptyMap(),
+    val assistenciasPorJogador: Map<Int, Int> = emptyMap(),
+    val amarelosPorJogador: Set<Int> = emptySet(),
+    val vermelhosPorJogador: Set<Int> = emptySet(),
+    val titularesMandante: List<Int> = emptyList(),
+    val titularesVisitante: List<Int> = emptyList(),
 ) {
     val posseMandante get() = statsMandante.posse
     val chutesMandante get() = statsMandante.chutes
@@ -146,6 +152,9 @@ class PartidaAoVivo(
     private val gas = (casa.emCampo + fora.emCampo)
         .associate { it.jogador.id to 100f }.toMutableMap()
     private val contribuicao = mutableMapOf<Int, Float>()
+    private val golsPor = mutableMapOf<Int, Int>()
+    private val assistPor = mutableMapOf<Int, Int>()
+    private val participaram = mutableSetOf<Int>()
 
     /** Quem está com a bola e quem tocou por último (para assistência). */
     private var atacante: Equipe = if (rng.nextBoolean()) casa else fora
@@ -187,6 +196,7 @@ class PartidaAoVivo(
         casa.banco.add(saindo.jogador)
         casa.substituicoes++
         gas[entra.id] = 100f
+        participaram += entra.id
         casa.recalcular()
 
         if (portador.jogador.id == sai) portador = casa.emCampo[indice]
@@ -569,7 +579,11 @@ class PartidaAoVivo(
         atacante.stats = atacante.stats.copy(
             chutesNoGol = atacante.stats.chutesNoGol + 1)
         contribuicao.merge(autor.jogador.id, 1.7f, Float::plus)
-        assistente?.let { contribuicao.merge(it.jogador.id, 1.0f, Float::plus) }
+        golsPor.merge(autor.jogador.id, 1, Int::plus)
+        assistente?.let {
+            contribuicao.merge(it.jogador.id, 1.0f, Float::plus)
+            assistPor.merge(it.jogador.id, 1, Int::plus)
+        }
         avancarRelogio(55)
         trocarPosse(defensor)
     }
@@ -737,6 +751,15 @@ class PartidaAoVivo(
             statsVisitante = fora.stats,
             notas = notas,
             gasFinal = gas.mapValues { it.value.toInt() },
+            golsPorJogador = golsPor.toMap(),
+            assistenciasPorJogador = assistPor.toMap(),
+            amarelosPorJogador = (casa.amarelados + fora.amarelados).toSet(),
+            vermelhosPorJogador = (casa.expulsos + fora.expulsos).toSet(),
+            titularesMandante = (casa.emCampo.map { it.jogador.id } +
+                    participaram.filter { id ->
+                        casa.emCampo.any { it.jogador.id == id }
+                    }).distinct(),
+            titularesVisitante = fora.emCampo.map { it.jogador.id },
         )
     }
 }
