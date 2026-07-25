@@ -1,5 +1,7 @@
 package com.exemplo.fmanager.ui
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.withFrameNanos
@@ -18,48 +21,50 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.exemplo.fmanager.dados.Jogador
 import com.exemplo.fmanager.formacao.Estilos
+import com.exemplo.fmanager.formacao.InstrucaoEquipe
 import com.exemplo.fmanager.formacao.Tatica
 import com.exemplo.fmanager.motor.*
 import kotlinx.coroutines.delay
 
 /*
- * TELA DA PARTIDA AO VIVO.
+ * TELA DA PARTIDA — DEITADA, CAMPO GRANDE.
  *
- * A bola está sempre nos pés de alguém — quem tem a posse aparece com um
- * anel. Cada passe desenha uma linha da origem ao destino, então dá para
- * acompanhar a construção da jogada em vez de ver uma bola à deriva.
+ * Três mudanças estruturais em relação à versão anterior:
  *
- * PERFORMANCE: as posições animadas ficam num HashMap comum, fora do
- * sistema de estado. O redesenho é disparado por um contador lido dentro
- * do Canvas, então cada frame roda só a fase de desenho. Sem isso, 22
- * peças a 60fps recomporiam a tela inteira 60 vezes por segundo.
+ * 1. ORIENTAÇÃO DEITADA. Um campo é 105x68 metros. Em pé, ele fica
+ *    estreito e as peças se empilham. Deitado cabe na proporção certa e
+ *    o campo ocupa a tela inteira.
+ *
+ * 2. RELÓGIO CONTÍNUO. Antes o ritmo era "um lance a cada X ms", então o
+ *    relógio de jogo disparava e tudo acontecia junto. Agora o relógio de
+ *    JOGO avança suave, e o motor só é chamado quando o relógio alcança o
+ *    próximo lance. Os eventos se espalham no tempo sozinhos.
+ *
+ * 3. FÍSICA A 60FPS. As peças caminham para alvos que mudam com a bola,
+ *    na velocidade do próprio atributo. Nada de saltar entre slots.
  */
 
-/**
- * Ritmo da partida. O valor é quanto tempo real cada lance ocupa.
- *
- * Uma partida tem ~1200 lances, então:
- *   COMPLETO ≈ 14 min · PAUSADO ≈ 8 min · NORMAL ≈ 4 min · RAPIDO ≈ 1 min
- *
- * O fator de suavização acompanha: quanto mais lento o ritmo, mais
- * gradual o deslocamento das peças. Sem isso, um ritmo lento fazia as
- * peças ficarem paradas e depois pularem de uma vez.
- */
-enum class Velocidade(
-    val rotulo: String,
-    val msPorLance: Long,
-    val suavizacao: Float,
-) {
-    COMPLETO("Tempo real", 700, 0.035f),
-    PAUSADO("Pausado", 400, 0.055f),
-    NORMAL("Normal", 200, 0.09f),
-    RAPIDO("Rápido", 60, 0.20f),
+enum class Ritmo(val rotulo: String, val segundosDeJogoPorSegundo: Float) {
+    TEMPO_REAL("1x", 1f),
+    LENTO("4x", 4f),
+    NORMAL("8x", 8f),
+    RAPIDO("20x", 20f);
+
+    /** Duração real aproximada da partida neste ritmo. */
+    val duracao: String get() = when (this) {
+        TEMPO_REAL -> "90 min"
+        LENTO -> "22 min"
+        NORMAL -> "11 min"
+        RAPIDO -> "4 min"
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,268 +77,348 @@ fun TelaPartidaAoVivo(
     taticaInicial: Tatica,
     onTerminar: () -> Unit,
 ) {
-    var instante by remember { mutableStateOf<Instante?>(null) }
-    var velocidade by remember { mutableStateOf(Velocidade.PAUSADO) }
+    // ------------------------------------------------ ORIENTAÇÃO
+    val contexto = LocalContext.current
+    DisposableEffect(Unit) {
+        val atividade = contexto as? Activity
+        val anterior = atividade?.requestedOrientation
+        atividade?.requestedOrientation =
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose {
+            atividade?.requestedOrientation =
+                anterior ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    var ritmo by remember { mutableStateOf(Ritmo.NORMAL) }
     var pausado by remember { mutableStateOf(false) }
-    var pulou by remember { mutableStateOf(false) }
     var painel by remember { mutableStateOf<String?>(null) }
     var tatica by remember { mutableStateOf(taticaInicial) }
-    var soDestaques by remember { mutableStateOf(false) }
     val narracao = remember { mutableStateListOf<Lance>() }
 
-    val posicoes = remember { HashMap<Int, Offset>() }
-    var bola by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
-    var passe by remember { mutableStateOf<Offset?>(null) }
-    val frame = remember { mutableIntStateOf(0) }
-
-    // ---------------------------------------------- LOOP DA PARTIDA
-    LaunchedEffect(velocidade, pausado, pulou) {
-        if (pulou) {
-            instante = partida.pularParaOFim()
-            narracao.clear()
-            narracao.addAll(partida.lancesAteAgora.reversed())
-            return@LaunchedEffect
-        }
-        if (pausado) return@LaunchedEffect
-
-        while (!partida.acabou) {
-            val i = partida.passo()
-            instante = i
-            i.lanceNovo?.let { narracao.add(0, it) }
-            while (narracao.size > 120) narracao.removeAt(narracao.size - 1)
-            delay(velocidade.msPorLance)
-        }
-    }
-
-    // ---------------------------------------------- LOOP DE ANIMAÇÃO
-    LaunchedEffect(velocidade) {
-        while (true) {
-            withFrameNanos {
-                val i = instante ?: return@withFrameNanos
-                val k = velocidade.suavizacao
-                i.pecas.forEach { p ->
-                    val alvo = Offset(p.x, p.y)
-                    val atual = posicoes[p.jogadorId] ?: alvo
-                    posicoes[p.jogadorId] = Offset(
-                        atual.x + (alvo.x - atual.x) * k,
-                        atual.y + (alvo.y - atual.y) * k,
-                    )
-                }
-                /*
-                 * A bola viaja, e o tempo de viagem depende da DISTÂNCIA.
-                 * Um toque de três metros chega quase instantâneo; um
-                 * lançamento cruza o campo visivelmente. Antes era uma
-                 * taxa fixa, e por isso todo passe parecia igual.
-                 */
-                val dx = i.bolaX - bola.x
-                val dy = i.bolaY - bola.y
-                val distancia = kotlin.math.hypot(dx, dy)
-                val kb = (k * 2.4f / (0.35f + distancia * 2.2f))
-                    .coerceIn(0.05f, 0.55f)
-                bola = Offset(bola.x + dx * kb, bola.y + dy * kb)
-                passe = if (i.passeDeX != null && i.passeDeY != null)
-                    Offset(i.passeDeX, i.passeDeY) else null
-                frame.intValue++
-            }
-        }
-    }
-
-    val i = instante
-
-    Column(Modifier.fillMaxSize().background(Fundo)) {
-
-        // -------------------------------------------------- PLACAR
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(nomeMandante, Modifier.weight(1f), maxLines = 1,
-                style = MaterialTheme.typography.bodyMedium, color = Texto)
-            Text("${i?.golsMandante ?: 0} - ${i?.golsVisitante ?: 0}",
-                Modifier.padding(horizontal = 12.dp),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold, color = Destaque)
-            Text(nomeVisitante, Modifier.weight(1f), maxLines = 1,
-                style = MaterialTheme.typography.bodyMedium, color = Texto)
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text("${i?.minuto ?: 0}'",
-                style = MaterialTheme.typography.labelLarge, color = Alerta)
-            i?.let {
-                val meu = if (souMandante) it.statsMandante else it.statsVisitante
-                val dele = if (souMandante) it.statsVisitante else it.statsMandante
-                Text("Posse ${meu.posse}%  ·  ${meu.chutes}x${dele.chutes} chutes  ·  " +
-                        "passe ${meu.precisaoPasse}%",
-                    style = MaterialTheme.typography.labelSmall, color = TextoFraco)
-            }
-        }
-
-        // --------------------------------------------------- CAMPO
-        CampoAoVivo(
-            posicoes = posicoes,
-            pecas = i?.pecas ?: emptyList(),
-            bola = bola,
-            passeDe = passe,
-            frame = frame,
-            souMandante = souMandante,
-            modifier = Modifier.fillMaxWidth().weight(1f)
-                .padding(horizontal = 12.dp),
+    // Camada física: vive fora do sistema de estado, redesenha por tick.
+    val fisica = remember {
+        CampoFisico(
+            obterCasa = { partida.escalacaoCasa },
+            obterFora = { partida.escalacaoFora },
         )
+    }
+    var quadro by remember { mutableStateOf<Quadro?>(null) }
+    val tick = remember { mutableIntStateOf(0) }
 
-        // ----------------------------------------------- CONTROLES
-        if (!partida.acabou) {
-            Row(
-                Modifier.horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Velocidade.entries.forEach { v ->
-                    FilterChip(
-                        selected = velocidade == v && !pausado,
-                        onClick = { velocidade = v; pausado = false },
-                        label = { Text(v.rotulo, fontSize = 11.sp) },
-                    )
+    // Relógio de jogo em segundos, com fração.
+    var relogio by remember { mutableFloatStateOf(0f) }
+    var acabou by remember { mutableStateOf(false) }
+
+    // ------------------------------------- LAÇO ÚNICO A 60FPS
+    LaunchedEffect(ritmo, pausado) {
+        if (pausado || acabou) return@LaunchedEffect
+        var ultimoNano = 0L
+
+        while (!acabou) {
+            withFrameNanos { agora ->
+                val dt = if (ultimoNano == 0L) 0.016f
+                else ((agora - ultimoNano) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                ultimoNano = agora
+
+                val dtJogo = dt * ritmo.segundosDeJogoPorSegundo
+                relogio += dtJogo
+
+                // O motor só avança quando o relógio de jogo alcança o
+                // ponto em que ele parou. É isso que espalha os lances.
+                var guarda = 0
+                while (partida.relogioDeJogo < relogio && !partida.acabou &&
+                    guarda < 6
+                ) {
+                    val i = partida.passo()
+                    i.lanceNovo?.let { l ->
+                        narracao.add(0, l)
+                        if (narracao.size > 100) narracao.removeAt(narracao.size - 1)
+                    }
+                    partida.consumirDuelo()?.let { (a, d) ->
+                        fisica.registrarDuelo(a, d)
+                    }
+                    guarda++
                 }
-                AssistChip(onClick = { pausado = !pausado },
-                    label = { Text(if (pausado) "Retomar" else "Pausar",
-                        fontSize = 11.sp) })
-                AssistChip(onClick = { painel = "taticas" },
-                    label = { Text("Táticas", fontSize = 11.sp) })
-                AssistChip(onClick = { pausado = true; painel = "subs" },
-                    label = { Text("Substituir", fontSize = 11.sp) })
-                AssistChip(onClick = { pulou = true },
-                    label = { Text("Pular", fontSize = 11.sp) })
-            }
-        } else {
-            Button(onClick = onTerminar,
-                modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("Encerrar partida")
-            }
-        }
 
-        // ------------------------------------------------ NARRAÇÃO
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("NARRAÇÃO", Modifier.weight(1f),
-                style = MaterialTheme.typography.labelSmall, color = TextoFraco)
-            TextButton(onClick = { soDestaques = !soDestaques }) {
-                Text(if (soDestaques) "Ver tudo" else "Só destaques",
-                    fontSize = 11.sp)
+                fisica.avancar(
+                    dt = dtJogo,
+                    mandanteComBola = partida.mandanteComBola,
+                    portadorId = partida.portadorId,
+                    alvoDaBola = partida.alvoDaBola,
+                    alturaLinhaCasa = partida.alturaLinhaCasa,
+                    alturaLinhaFora = partida.alturaLinhaFora,
+                    compactacaoCasa = partida.compactacaoCasa,
+                    compactacaoFora = partida.compactacaoFora,
+                )
+
+                quadro = fisica.quadro(partida.mandanteComBola, partida.portadorId)
+                tick.intValue++
+
+                if (partida.acabou) acabou = true
             }
         }
-
-        LazyColumn(
-            Modifier.fillMaxWidth().heightIn(max = 180.dp)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            val lista = if (soDestaques)
-                narracao.filter { it.importancia != Importancia.ROTINA }
-            else narracao
-            items(lista) { l -> LinhaNarracao(l) }
-        }
-        Spacer(Modifier.height(8.dp))
     }
 
-    // ---------------------------------------------------- PAINÉIS
+    // ------------------------------------------------------ LAYOUT
+    Row(Modifier.fillMaxSize().background(Fundo)) {
+
+        // ------------------------------------------- CAMPO (grande)
+        Box(Modifier.weight(1f).fillMaxHeight().padding(6.dp)) {
+            CampoDeitado(
+                quadro = quadro,
+                tick = tick,
+                souMandante = souMandante,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            // Placar sobreposto, canto superior
+            Surface(
+                Modifier.align(Alignment.TopCenter).padding(top = 6.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = Color.Black.copy(alpha = .62f),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(nomeMandante.take(14), color = Destaque,
+                        style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "  ${partida.golsCasaAgora} - ${partida.golsForaAgora}  ",
+                        style = EstiloNumeroPequeno, color = Texto, fontSize = 19.sp,
+                    )
+                    Text(nomeVisitante.take(14), color = Erro,
+                        style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(12.dp))
+                    Text("${partida.minuto}'", color = Alerta,
+                        style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+
+        // -------------------------------------- LATERAL DE CONTROLE
+        Column(
+            Modifier.width(196.dp).fillMaxHeight()
+                .background(Superficie)
+                .padding(10.dp),
+        ) {
+            val meu = if (souMandante) partida.statsCasa else partida.statsFora
+            val dele = if (souMandante) partida.statsFora else partida.statsCasa
+
+            Text("POSSE  ${meu.posse}%", style = EstiloRotulo, color = Destaque)
+            Spacer(Modifier.height(4.dp))
+            BarraComparativa("Finalizações", meu.chutes, dele.chutes)
+            BarraComparativa("No gol", meu.chutesNoGol, dele.chutesNoGol)
+            BarraComparativa("Passe %", meu.precisaoPasse, dele.precisaoPasse)
+            BarraComparativa("Faltas", meu.faltas, dele.faltas)
+            BarraComparativa("Escanteios", meu.escanteios, dele.escanteios)
+
+            Spacer(Modifier.height(8.dp))
+
+            if (!acabou) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Ritmo.entries.forEach { r ->
+                        FilterChip(
+                            selected = ritmo == r && !pausado,
+                            onClick = { ritmo = r; pausado = false },
+                            label = { Text(r.rotulo, fontSize = 10.sp) },
+                        )
+                    }
+                }
+                Text(ritmo.duracao, style = MaterialTheme.typography.labelSmall,
+                    color = TextoFraco)
+
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AssistChip(onClick = { pausado = !pausado },
+                        label = { Text(if (pausado) "▶" else "❙❙", fontSize = 11.sp) })
+                    AssistChip(onClick = { painel = "taticas" },
+                        label = { Text("Táticas", fontSize = 10.sp) })
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AssistChip(onClick = { pausado = true; painel = "subs" },
+                        label = { Text("Trocas", fontSize = 10.sp) })
+                    AssistChip(
+                        onClick = { partida.pularParaOFim(); acabou = true },
+                        label = { Text("Pular", fontSize = 10.sp) },
+                    )
+                }
+            } else {
+                Button(onClick = onTerminar, Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)) {
+                    Text("Encerrar", fontSize = 12.sp)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(narracao.filter { it.importancia != Importancia.ROTINA }) { l ->
+                    Row {
+                        Text("${l.minuto}'", Modifier.width(26.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextoFraco, fontSize = 9.sp)
+                        Text(l.narrar(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when (l.importancia) {
+                                Importancia.DECISIVO -> Destaque
+                                else -> TextoMedio
+                            }, fontSize = 9.sp)
+                    }
+                }
+            }
+        }
+    }
+
     when (painel) {
         "taticas" -> ModalBottomSheet(
-            onDismissRequest = { painel = null },
-            containerColor = Superficie,
-        ) {
-            PainelTaticas(tatica, souMandante, partida) { tatica = it }
-        }
+            onDismissRequest = { painel = null }, containerColor = Superficie,
+        ) { PainelTaticas(tatica, souMandante, partida) { tatica = it } }
 
         "subs" -> ModalBottomSheet(
             onDismissRequest = { painel = null; pausado = false },
             containerColor = Superficie,
-        ) {
-            PainelSubstituicoes(partida, i) { painel = null; pausado = false }
-        }
+        ) { PainelSubstituicoes(partida) { painel = null; pausado = false } }
     }
 }
 
-// ------------------------------------------------------------- CAMPO
+// ------------------------------------------------------- CAMPO DEITADO
 
 @Composable
-private fun CampoAoVivo(
-    posicoes: HashMap<Int, Offset>,
-    pecas: List<Peca>,
-    bola: Offset,
-    passeDe: Offset?,
-    frame: MutableIntState,
+private fun CampoDeitado(
+    quadro: Quadro?,
+    tick: MutableIntState,
     souMandante: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Canvas(
-        modifier.clip(MaterialTheme.shapes.large).background(Color(0xFF0D1B1E))
-    ) {
-        @Suppress("UNUSED_EXPRESSION") frame.intValue
+    Canvas(modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF0A1512))) {
+        @Suppress("UNUSED_EXPRESSION") tick.intValue
 
-        val l = size.width
-        val a = size.height
-        val traco = Stroke(width = 1.5.dp.toPx())
-        val linha = Color(0xFF4FD1C5).copy(alpha = .20f)
-        val m = 8.dp.toPx()
+        /*
+         * Campo deitado: o y do modelo (0 = gol do mandante) vira o X da
+         * tela. O mandante ataca da esquerda para a direita.
+         */
+        val m = 10.dp.toPx()
+        val larg = size.width - 2 * m
+        val alt = size.height - 2 * m
+        fun px(modeloY: Float) = m + modeloY * larg
+        fun py(modeloX: Float) = m + modeloX * alt
 
-        repeat(10) { k ->
-            if (k % 2 == 0) drawRect(
-                Color(0xFF122326), Offset(0f, a / 10 * k), Size(l, a / 10))
-        }
-        drawRect(linha, Offset(m, m), Size(l - 2 * m, a - 2 * m), style = traco)
-        drawLine(linha, Offset(m, a / 2), Offset(l - m, a / 2),
-            strokeWidth = traco.width)
-        drawCircle(linha, l * .13f, Offset(l / 2, a / 2), style = traco)
+        desenharGramado(m, larg, alt)
 
-        val largGA = l * .52f; val altGA = a * .13f
-        drawRect(linha, Offset((l - largGA) / 2, a - m - altGA),
-            Size(largGA, altGA), style = traco)
-        drawRect(linha, Offset((l - largGA) / 2, m),
-            Size(largGA, altGA), style = traco)
+        val q = quadro ?: return@Canvas
 
-        val bolaPx = Offset(bola.x * l, (1f - bola.y) * a)
+        // ------------------------------------ LINHAS DE IMPEDIMENTO
+        // Só a do lado que ataca — duas ao mesmo tempo confundiria.
+        val linha = if (q.pecas.any { it.comABola && it.doMandante })
+            q.impedimentoParaMandante else q.impedimentoParaVisitante
+        val corLinha = if (q.pecas.any { it.comABola && it.doMandante })
+            Erro else Destaque
 
-        // Linha do passe em curso: mostra a construção da jogada.
-        passeDe?.let { de ->
-            drawLine(
-                color = Color(0xFFF5F0E6).copy(alpha = .55f),
-                start = Offset(de.x * l, (1f - de.y) * a),
-                end = bolaPx,
-                strokeWidth = 1.5.dp.toPx(),
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
-            )
-        }
+        drawLine(
+            color = corLinha.copy(alpha = .55f),
+            start = Offset(px(linha), m),
+            end = Offset(px(linha), m + alt),
+            strokeWidth = 1.5.dp.toPx(),
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 9f)),
+        )
 
-        val raio = 9.dp.toPx()
+        // ------------------------------------------------- PEÇAS
+        val raio = 7.5.dp.toPx()
 
-        pecas.forEach { p ->
-            val pos = posicoes[p.jogadorId] ?: Offset(p.x, p.y)
-            val cx = pos.x * l
-            val cy = (1f - pos.y) * a
-
+        q.pecas.forEach { p ->
+            val cx = px(p.y)
+            val cy = py(p.x)
             val minha = p.doMandante == souMandante
-            val cor = if (minha) Destaque else Color(0xFFE05C5C)
-            val alpha = (0.45f + (p.gas / 100f) * 0.55f).coerceIn(0.4f, 1f)
+            val cor = if (minha) Destaque else Erro
+            val impedido = p.jogadorId in q.impedidos
 
-            drawCircle(cor.copy(alpha = alpha), raio, Offset(cx, cy))
+            // Rastro de esforço: quanto mais corre, mais visível o traço.
+            if (p.esforco > 0.35f) {
+                drawCircle(
+                    cor.copy(alpha = .16f * p.esforco),
+                    raio * (1.4f + p.esforco * 0.7f),
+                    Offset(cx, cy),
+                )
+            }
 
-            // Quem tem a bola ganha um anel — dá pra seguir a jogada.
-            if (p.comABola) {
-                drawCircle(Color(0xFFF5F0E6), raio + 4.dp.toPx(),
+            // Duelo: anel branco pulsante nos dois envolvidos.
+            if (p.emDuelo) {
+                drawCircle(Color.White.copy(alpha = .75f), raio + 4.dp.toPx(),
                     Offset(cx, cy), style = Stroke(width = 2.dp.toPx()))
-            } else if (minha) {
-                drawCircle(Color.White.copy(alpha = .30f), raio,
-                    Offset(cx, cy), style = Stroke(width = 1.dp.toPx()))
+            }
+
+            drawCircle(
+                if (impedido) Alerta else cor,
+                raio, Offset(cx, cy),
+            )
+            drawCircle(Color.Black.copy(alpha = .35f), raio,
+                Offset(cx, cy), style = Stroke(width = 1f))
+
+            if (p.comABola) {
+                drawCircle(Color(0xFFF5F0E6), raio + 3.5.dp.toPx(),
+                    Offset(cx, cy), style = Stroke(width = 2.dp.toPx()))
             }
         }
 
-        drawCircle(Color(0xFFF5F0E6), 4.5.dp.toPx(), bolaPx)
+        // -------------------------------------------------- BOLA
+        val bx = px(q.bola.y)
+        val by = py(q.bola.x)
+        drawCircle(Color.Black.copy(alpha = .30f), 4.dp.toPx(),
+            Offset(bx + 1.5f, by + 2f))
+        drawCircle(Color(0xFFFDFBF5), 4.dp.toPx(), Offset(bx, by))
+    }
+}
+
+private fun DrawScope.desenharGramado(m: Float, larg: Float, alt: Float) {
+    val traco = Stroke(width = 1.6.dp.toPx())
+    val cor = Color(0xFF4FD1C5).copy(alpha = .26f)
+
+    // Faixas verticais de corte de grama.
+    repeat(12) { k ->
+        if (k % 2 == 0) drawRect(
+            Color(0xFF10201C),
+            Offset(m + larg / 12 * k, m),
+            Size(larg / 12, alt),
+        )
+    }
+
+    drawRect(cor, Offset(m, m), Size(larg, alt), style = traco)
+    drawLine(cor, Offset(m + larg / 2, m), Offset(m + larg / 2, m + alt),
+        strokeWidth = traco.width)
+    drawCircle(cor, alt * 0.155f, Offset(m + larg / 2, m + alt / 2), style = traco)
+    drawCircle(cor, 2.5.dp.toPx(), Offset(m + larg / 2, m + alt / 2))
+
+    // Grandes áreas, pequenas áreas e gols nos dois extremos.
+    val largGA = larg * 0.165f
+    val altGA = alt * 0.58f
+    val largPA = larg * 0.055f
+    val altPA = alt * 0.27f
+    val altGol = alt * 0.13f
+
+    listOf(true, false).forEach { esquerda ->
+        val x0GA = if (esquerda) m else m + larg - largGA
+        drawRect(cor, Offset(x0GA, m + (alt - altGA) / 2),
+            Size(largGA, altGA), style = traco)
+
+        val x0PA = if (esquerda) m else m + larg - largPA
+        drawRect(cor, Offset(x0PA, m + (alt - altPA) / 2),
+            Size(largPA, altPA), style = traco)
+
+        val x0Gol = if (esquerda) m - 4.dp.toPx() else m + larg
+        drawRect(cor.copy(alpha = .5f), Offset(x0Gol, m + (alt - altGol) / 2),
+            Size(4.dp.toPx(), altGol))
+
+        // Marca do pênalti.
+        val xPen = if (esquerda) m + larg * 0.11f else m + larg * 0.89f
+        drawCircle(cor, 2.dp.toPx(), Offset(xPen, m + alt / 2))
     }
 }
 
@@ -346,205 +431,105 @@ private fun PainelTaticas(
     partida: PartidaAoVivo,
     onMudar: (Tatica) -> Unit,
 ) {
-    Column(Modifier.padding(20.dp)) {
-        Text("Ajustar durante a partida",
-            style = MaterialTheme.typography.titleMedium, color = Texto)
-        Text("Vale do próximo lance em diante.",
-            style = MaterialTheme.typography.bodySmall, color = TextoFraco)
-        Spacer(Modifier.height(16.dp))
-
-        Row(Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Estilos.todos.forEach { (nome, preset) ->
-                FilterChip(
-                    selected = tatica == preset,
-                    onClick = {
-                        onMudar(preset)
-                        partida.atualizarTatica(souMandante, preset)
-                    },
-                    label = { Text(nome, fontSize = 11.sp) },
-                )
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-
-        // Mentalidade primeiro: é o ajuste que resolve mais rápido no
-        // meio de um jogo apertado.
-        Row(Modifier.fillMaxWidth()) {
-            Text("Mentalidade — ${tatica.rotuloMentalidade}", Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall, color = Texto)
-            Text("${tatica.mentalidade}",
-                style = MaterialTheme.typography.bodySmall, color = Destaque)
-        }
-        Slider(
-            value = tatica.mentalidade.toFloat(),
-            onValueChange = {
-                val nova = tatica.copy(mentalidade = it.toInt())
-                onMudar(nova)
-                partida.atualizarTatica(souMandante, nova)
-            },
-            valueRange = 0f..100f,
-        )
-        Spacer(Modifier.height(10.dp))
-
-        listOf<Triple<String, Int, (Int) -> Tatica>>(
-            Triple("Altura da linha", tatica.alturaLinha)
-            { tatica.copy(alturaLinha = it) },
-            Triple("Intensidade de pressão", tatica.intensidadePressao)
-            { tatica.copy(intensidadePressao = it) },
-            Triple("Velocidade de construção", tatica.velocidadeConstrucao)
-            { tatica.copy(velocidadeConstrucao = it) },
-            Triple("Risco no passe", tatica.riscoNoPasse)
-            { tatica.copy(riscoNoPasse = it) },
-            Triple("Liberdade criativa", tatica.liberdadeCriativa)
-            { tatica.copy(liberdadeCriativa = it) },
-        ).forEach { (titulo, valor, gerar) ->
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)
+        .padding(horizontal = 18.dp)) {
+        item {
             Row(Modifier.fillMaxWidth()) {
-                Text(titulo, Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall, color = TextoFraco)
-                Text("$valor", style = MaterialTheme.typography.bodySmall,
+                Text("Mentalidade — ${tatica.rotuloMentalidade}",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium, color = Texto)
+                Text("${tatica.mentalidade}", style = EstiloNumeroPequeno,
                     color = Destaque)
             }
             Slider(
-                value = valor.toFloat(),
+                value = tatica.mentalidade.toFloat(),
                 onValueChange = {
-                    val nova = gerar(it.toInt())
+                    val nova = tatica.copy(mentalidade = it.toInt())
                     onMudar(nova)
                     partida.atualizarTatica(souMandante, nova)
                 },
                 valueRange = 0f..100f,
             )
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Estilos.todos.forEach { (nome, preset) ->
+                    FilterChip(tatica == preset, {
+                        onMudar(preset)
+                        partida.atualizarTatica(souMandante, preset)
+                    }, { Text(nome, fontSize = 10.sp) })
+                }
+            }
+            Spacer(Modifier.height(10.dp))
         }
-        Spacer(Modifier.height(24.dp))
+
+        items(InstrucaoEquipe.entries.toList()) { i ->
+            val ativa = tatica.tem(i)
+            Row(
+                Modifier.fillMaxWidth().clickable {
+                    val nova = tatica.alternar(i)
+                    onMudar(nova)
+                    partida.atualizarTatica(souMandante, nova)
+                }.padding(vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(i.rotulo, Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (ativa) Destaque else TextoMedio)
+                Switch(ativa, {
+                    val nova = tatica.alternar(i)
+                    onMudar(nova)
+                    partida.atualizarTatica(souMandante, nova)
+                })
+            }
+        }
+        item { Spacer(Modifier.height(20.dp)) }
     }
 }
 
 @Composable
-private fun PainelSubstituicoes(
-    partida: PartidaAoVivo,
-    instante: Instante?,
-    onFechar: () -> Unit,
-) {
+private fun PainelSubstituicoes(partida: PartidaAoVivo, onFechar: () -> Unit) {
     var saindo by remember { mutableStateOf<Jogador?>(null) }
-    var aviso by remember { mutableStateOf<String?>(null) }
     var versao by remember { mutableIntStateOf(0) }
 
-    val gasPorId = remember(instante) {
-        instante?.pecas?.associate { it.jogadorId to it.gas } ?: emptyMap()
-    }
-
-    Column(Modifier.padding(horizontal = 20.dp)) {
-        Text("Substituições",
-            style = MaterialTheme.typography.titleMedium, color = Texto)
+    Column(Modifier.padding(horizontal = 18.dp)) {
         @Suppress("UNUSED_EXPRESSION") versao
         Text(
-            if (partida.podeSubstituir)
-                "Toque em quem sai, depois em quem entra"
-            else "Você já usou todas as substituições",
+            if (partida.podeSubstituir) "Toque em quem sai, depois em quem entra"
+            else "Substituições esgotadas",
             style = MaterialTheme.typography.bodySmall,
-            color = if (partida.podeSubstituir) TextoFraco else Erro,
+            color = if (partida.podeSubstituir) TextoMedio else Erro,
         )
-        aviso?.let {
-            Spacer(Modifier.height(6.dp))
-            Text(it, style = MaterialTheme.typography.bodySmall, color = Alerta)
-        }
-        Spacer(Modifier.height(14.dp))
     }
 
-    LazyColumn(
-        Modifier.fillMaxWidth().heightIn(max = 460.dp).padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 300.dp)
+        .padding(horizontal = 14.dp)) {
+        item { Text("EM CAMPO", style = EstiloRotulo, color = TextoFraco) }
+        items(partida.elencoEmCampo, key = { "c${it.id}" }) { j ->
+            LinhaElenco(
+                jogador = j, detalhe = j.posicao, valorDireita = "${j.geral}",
+                corValor = if (saindo?.id == j.id) Destaque else Texto,
+                onClicar = { saindo = j },
+            )
+        }
         item {
-            Text("EM CAMPO", style = MaterialTheme.typography.labelSmall,
-                color = TextoFraco)
+            Spacer(Modifier.height(10.dp))
+            Text("NO BANCO", style = EstiloRotulo, color = TextoFraco)
         }
-        items(partida.elencoEmCampo, key = { "campo${it.id}" }) { j ->
-            val g = gasPorId[j.id] ?: 100
-            LinhaSubstituicao(
-                jogador = j,
-                detalhe = "gás $g%",
-                corDetalhe = when {
-                    g >= 70 -> TextoFraco
-                    g >= 50 -> Alerta
-                    else -> Erro
-                },
-                selecionado = saindo?.id == j.id,
-            ) { saindo = j; aviso = null }
-        }
-
-        item {
-            Spacer(Modifier.height(12.dp))
-            Text("NO BANCO", style = MaterialTheme.typography.labelSmall,
-                color = TextoFraco)
-        }
-        items(partida.bancoDisponivel, key = { "banco${it.id}" }) { j ->
-            LinhaSubstituicao(
+        items(partida.bancoDisponivel, key = { "b${it.id}" }) { j ->
+            LinhaElenco(
                 jogador = j,
                 detalhe = "${j.posicao} · descansado",
+                valorDireita = "${j.geral}",
                 corDetalhe = Destaque,
-                selecionado = false,
-            ) {
-                val sai = saindo
-                if (sai == null) {
-                    aviso = "Escolha primeiro quem sai."
-                } else {
-                    val feito = partida.substituir(sai.id, j)
-                    if (feito == null) {
-                        aviso = "Não foi possível fazer a troca."
-                    } else {
-                        saindo = null
+                onClicar = {
+                    saindo?.let { s ->
+                        partida.substituir(s.id, j)
                         versao++
                         onFechar()
                     }
-                }
-            }
+                },
+            )
         }
-        item { Spacer(Modifier.height(24.dp)) }
-    }
-}
-
-@Composable
-private fun LinhaSubstituicao(
-    jogador: Jogador,
-    detalhe: String,
-    corDetalhe: Color,
-    selecionado: Boolean,
-    onClicar: () -> Unit,
-) {
-    Surface(
-        Modifier.fillMaxWidth().clickable(onClick = onClicar),
-        shape = MaterialTheme.shapes.small,
-        color = if (selecionado) Destaque.copy(alpha = .18f) else SuperficieAlta,
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(jogador.nome, maxLines = 1,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (selecionado) Destaque else Texto)
-                Text(detalhe, style = MaterialTheme.typography.labelSmall,
-                    color = corDetalhe)
-            }
-            Text("${jogador.geral}", fontWeight = FontWeight.Bold, color = Texto)
-        }
-    }
-}
-
-@Composable
-private fun LinhaNarracao(l: Lance) {
-    val cor = when (l.importancia) {
-        Importancia.DECISIVO -> Destaque
-        Importancia.DESTAQUE -> Texto
-        Importancia.ROTINA -> TextoFraco.copy(alpha = .75f)
-    }
-    Row(Modifier.fillMaxWidth()) {
-        Text("${l.minuto}'", Modifier.width(32.dp),
-            style = MaterialTheme.typography.labelSmall, color = TextoFraco)
-        Text(l.narrar(), style = MaterialTheme.typography.bodySmall, color = cor,
-            fontWeight = if (l.importancia == Importancia.DECISIVO)
-                FontWeight.Bold else FontWeight.Normal)
+        item { Spacer(Modifier.height(20.dp)) }
     }
 }

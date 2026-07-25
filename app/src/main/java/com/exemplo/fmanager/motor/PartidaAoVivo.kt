@@ -210,6 +210,50 @@ class PartidaAoVivo(
 
     val acabou: Boolean get() = segundos >= DURACAO_SEGUNDOS
     val minuto: Int get() = (segundos / 60).coerceAtMost(90)
+
+    /*
+     * ACESSO PARA A CAMADA FÍSICA.
+     *
+     * A física precisa saber quem está em campo e quem tem a bola para
+     * mover as peças. Separar as duas camadas é o que permite o movimento
+     * ser contínuo enquanto os lances continuam discretos.
+     */
+    val relogioDeJogo: Int get() = segundos
+    val escalacaoCasa: List<JogadorEmCampo> get() = casa.ativos
+    val escalacaoFora: List<JogadorEmCampo> get() = fora.ativos
+    val portadorId: Int get() = portador.jogador.id
+    val mandanteComBola: Boolean get() = atacante === casa
+    val alturaLinhaCasa: Float get() = casa.forcas.tatica.alturaLinha / 100f
+    val alturaLinhaFora: Float get() = fora.forcas.tatica.alturaLinha / 100f
+    val compactacaoCasa: Float get() = casa.forcas.tatica.compactacao / 100f
+    val compactacaoFora: Float get() = fora.forcas.tatica.compactacao / 100f
+    val golsCasaAgora: Int get() = golsCasa
+    val golsForaAgora: Int get() = golsFora
+    val statsCasa: Estatisticas get() = casa.stats
+    val statsFora: Estatisticas get() = fora.stats
+
+    /**
+     * Onde a bola deve estar: nos pés do portador, na perspectiva do
+     * mandante. A física interpola até lá.
+     */
+    val alvoDaBola: Ponto
+        get() {
+            val (x, y) = posicaoAbsoluta(portador, atacante)
+            return Ponto(x, y)
+        }
+
+    /** Último duelo, para a tela mostrar o desarme acontecendo. */
+    private var dueloPendente: Pair<Int, Int>? = null
+
+    /**
+     * Lê e limpa. Consumir é essencial: sem isso a tela reregistraria o
+     * mesmo duelo 60 vezes por segundo e o anel nunca apagaria.
+     */
+    fun consumirDuelo(): Pair<Int, Int>? {
+        val d = dueloPendente
+        dueloPendente = null
+        return d
+    }
     val lancesAteAgora: List<Lance> get() = historico.toList()
     val podeSubstituir: Boolean
         get() = casa.substituicoes < MAX_SUBSTITUICOES
@@ -493,6 +537,7 @@ class PartidaAoVivo(
         val autor = portador.jogador.nome
         val nomeMarcador = marcador.jogador.nome
 
+        dueloPendente = portador.jogador.id to marcador.jogador.id
         if (sucesso) {
             avancoConducao = (avancoConducao + 0.09f).coerceAtMost(0.30f)
             contribuicao.merge(portador.jogador.id, 0.06f, Float::plus)
@@ -507,6 +552,7 @@ class PartidaAoVivo(
         }
 
         defensor.stats = defensor.stats.copy(desarmes = defensor.stats.desarmes + 1)
+        dueloPendente = portador.jogador.id to marcador.jogador.id
         trocarPosse(defensor, marcador)
         return Lance.Drible(minuto, atacante.time.nome, autor, nomeMarcador, false)
     }
@@ -521,6 +567,7 @@ class PartidaAoVivo(
             defensor.stats = defensor.stats.copy(
                 desarmes = defensor.stats.desarmes + 1)
             val vitima = autor
+            ladrao?.let { dueloPendente = portador.jogador.id to it.jogador.id }
             trocarPosse(defensor, ladrao)
             return ladrao?.let {
                 Lance.Desarme(minuto, defensor.time.nome, it.jogador.nome, vitima)

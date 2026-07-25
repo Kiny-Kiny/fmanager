@@ -102,6 +102,83 @@ sobre-humano acumulando traços.
 
 
 
+
+## Partida: física contínua e tela deitada
+
+A versão anterior parecia travada por um motivo estrutural: cada jogador
+tinha **exatamente três posições possíveis** — a do slot em cada fase — e
+saltava entre elas. Não havia movimento, havia teletransporte entre três
+pontos.
+
+O conserto foi separar a simulação **tática** (discreta, por lances) da
+**física** (contínua, a 60fps).
+
+### Física do campo (`Fisica.kt`)
+
+Cada jogador tem posição contínua e caminha para um alvo que muda a cada
+instante. O alvo **não é o slot** — é o slot deslocado por três forças:
+
+**Atração pela bola.** Todo mundo desliza para o lado onde a bola está, e
+quem está mais perto se move mais. É isso que faz o bloco compactar de
+verdade em vez de ficar esticado como um desenho técnico.
+
+**Linha defensiva como bloco.** Os defensores compartilham uma altura
+comum que sobe e desce com a bola. Sem isso não existe linha, existem
+quatro jogadores parados em pontos fixos.
+
+**Marcação.** Quem está mais perto do portador vai atrás dele — e vai para
+**entre ele e o próprio gol**, não para cima dele.
+
+A velocidade de cada jogador sai dos atributos: um rápido cruza o campo em
+~11 segundos, um lento em ~16. O **esforço** (0 a 1) vem da distância até
+o alvo, então perto do lugar ele caminha e longe ele corre — é o que dá a
+leitura de gente andando no campo.
+
+### Linha de impedimento em tempo real
+
+Regra real: a linha fica no penúltimo defensor. Como o goleiro é quase
+sempre o último, na prática é o defensor de campo mais recuado.
+
+É calculada da **posição real**, não do slot — então ela se move de verdade
+quando a defesa sobe, e você vê a armadilha acontecendo. Quem fica além
+dela **e à frente da bola** aparece em laranja. Atrás da bola não existe
+impedimento, e o cálculo respeita isso.
+
+### Duelos visíveis
+
+Desarme, drible perdido e roubo de bola registram um duelo, e os dois
+envolvidos ganham um anel branco por ~0,9 segundo. O duelo é **consumido**
+ao ser lido — sem isso a tela reregistraria o mesmo lance 60 vezes por
+segundo e o anel nunca apagaria.
+
+### Relógio contínuo: o conserto do "muita coisa de uma vez"
+
+Antes o ritmo era "um lance a cada X milissegundos". O relógio de jogo
+disparava e os eventos se amontoavam.
+
+Agora o **relógio de jogo** avança suave, e o motor só é chamado quando o
+relógio alcança o ponto em que ele parou:
+
+```
+relógio += dt × multiplicador
+while (motor.relogioDeJogo < relógio) motor.passo()
+```
+
+Os lances se espalham no tempo sozinhos, porque cada um já custa segundos
+de jogo diferentes: um toque 2s, uma falta cobrada 30s, um gol 55s.
+
+Ritmos: **1x** (90 min de verdade), **4x** (22 min), **8x** (11 min),
+**20x** (4 min).
+
+### Tela deitada
+
+Um campo tem 105 por 68 metros. Em pé ele fica estreito e as peças se
+empilham. A tela de partida agora força orientação **paisagem**, o campo
+ocupa quase tudo e o mandante ataca da esquerda para a direita.
+
+O `configChanges` no manifesto é obrigatório aqui: sem ele a Activity é
+recriada ao girar e a partida reiniciaria do zero.
+
 ## Calibração do motor: o conserto dos gols
 
 O placar estava saindo alto e a causa era matemática, com **dois erros que
@@ -609,8 +686,7 @@ de `COM_POSSE`; quando defende, para `SEM_POSSE`. Você vê a 4-2-3-1
 virar 3-2-5 em tempo real, porque é literalmente a mesma estrutura de
 dados que você desenhou.
 
-Velocidades: lance a lance, normal, rápido, ou **Pular**. Pausar a
-qualquer momento. O botão **Táticas** abre os controles no meio do jogo.
+Ritmos de 1x a 20x, com pausa a qualquer momento. O botão **Táticas** abre os controles no meio do jogo.
 O botão **Substituir** pausa a partida e mostra quem está em campo com o
 gás de cada um, mais o banco — 5 substituições, e o reserva herda o slot,
 as instruções e o estilo de quem saiu.
