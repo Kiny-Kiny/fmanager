@@ -5,6 +5,11 @@ import androidx.room.*
 import androidx.room.migration.Migration
 import com.exemplo.fmanager.sistemas.Observacao
 import com.exemplo.fmanager.sistemas.RetratoJogador
+import com.exemplo.fmanager.sistemas.Titulo
+import com.exemplo.fmanager.sistemas.Inscricao
+import com.exemplo.fmanager.sistemas.Cargo
+import com.exemplo.fmanager.sistemas.MembroComissao
+import com.exemplo.fmanager.sistemas.Torneio
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Dao
@@ -88,6 +93,70 @@ interface CarreiraDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun salvar(carreira: Carreira)
+}
+
+@Dao
+interface TorneioDao {
+    @Query("SELECT * FROM torneios WHERE temporada = :temporada ORDER BY id DESC")
+    suspend fun daTemporada(temporada: Int): List<Torneio>
+
+    @Query("SELECT * FROM torneios ORDER BY id DESC")
+    suspend fun todos(): List<Torneio>
+
+    @Query("SELECT * FROM torneios WHERE id = :id")
+    suspend fun porId(id: Int): Torneio?
+
+    @Insert suspend fun criar(t: Torneio): Long
+    @Update suspend fun atualizar(t: Torneio)
+    @Query("DELETE FROM torneios WHERE id = :id") suspend fun apagar(id: Int)
+}
+
+@Dao
+interface ComissaoDao {
+    @Query("SELECT * FROM comissao WHERE clubeId = :clubeId")
+    suspend fun doClube(clubeId: Int): List<MembroComissao>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun contratar(m: MembroComissao)
+
+    @Query("DELETE FROM comissao WHERE clubeId = :clubeId AND cargo = :cargo")
+    suspend fun demitirDoCargo(clubeId: Int, cargo: String)
+
+    @Query("DELETE FROM comissao WHERE id = :id")
+    suspend fun demitir(id: Int)
+}
+
+@Dao
+interface InscricaoDao {
+    @Query("SELECT jogadorId FROM inscricoes WHERE torneioId = :torneioId AND clubeId = :clubeId")
+    suspend fun ids(torneioId: Int, clubeId: Int): List<Int>
+
+    @Query("SELECT COUNT(*) FROM inscricoes WHERE torneioId = :torneioId AND clubeId = :clubeId")
+    suspend fun quantos(torneioId: Int, clubeId: Int): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun inscrever(lista: List<Inscricao>)
+
+    @Query("DELETE FROM inscricoes WHERE torneioId = :torneioId AND clubeId = :clubeId")
+    suspend fun limpar(torneioId: Int, clubeId: Int)
+}
+
+@Dao
+interface TituloDao {
+    @Query("SELECT * FROM titulos WHERE clubeId = :clubeId ORDER BY temporada DESC")
+    suspend fun doClube(clubeId: Int): List<Titulo>
+
+    @Query("SELECT COUNT(*) FROM titulos WHERE clubeId = :clubeId")
+    suspend fun quantos(clubeId: Int): Int
+
+    @Insert suspend fun registrar(t: Titulo)
+
+    @Query("""
+        SELECT COUNT(*) FROM titulos
+        WHERE clubeId = :clubeId AND nomeDaCompeticao = :nome
+          AND temporada = :temporada
+    """)
+    suspend fun jaRegistrado(clubeId: Int, nome: String, temporada: Int): Int
 }
 
 @Dao
@@ -183,13 +252,32 @@ interface EstatisticaDao {
     ): List<Artilheiro>
 }
 
+/**
+ * Conversores de tipo.
+ *
+ * Room não sabe persistir enum sozinho — precisa de conversor explícito.
+ * Guardo pelo NOME, não pelo ordinal: se eu reordenar o enum um dia, os
+ * dados salvos continuam válidos. Ordinal quebraria em silêncio.
+ */
+class Conversores {
+    @TypeConverter
+    fun cargoParaTexto(c: Cargo): String = c.name
+
+    @TypeConverter
+    fun textoParaCargo(t: String): Cargo =
+        runCatching { Cargo.valueOf(t) }.getOrDefault(Cargo.AUXILIAR)
+}
+
 @Database(
     entities = [Jogador::class, Clube::class, Liga::class,
         Contrato::class, Partida::class, Carreira::class,
-        EstatisticaJogador::class, Observacao::class, RetratoJogador::class],
-    version = 4,
+        EstatisticaJogador::class, Observacao::class, RetratoJogador::class,
+        Torneio::class, Titulo::class, Inscricao::class,
+        MembroComissao::class],
+    version = 7,
     exportSchema = false,
 )
+@TypeConverters(Conversores::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun jogadores(): JogadorDao
     abstract fun clubes(): ClubeDao
@@ -201,6 +289,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun impressao(): ImpressaoDao
     abstract fun observacoes(): ObservacaoDao
     abstract fun retratos(): RetratoDao
+    abstract fun torneios(): TorneioDao
+    abstract fun titulos(): TituloDao
+    abstract fun inscricoes(): InscricaoDao
+    abstract fun comissao(): ComissaoDao
 
     companion object {
         @Volatile private var instancia: AppDatabase? = null
@@ -212,6 +304,75 @@ abstract class AppDatabase : RoomDatabase() {
          * os 16 mil jogadores importados e obrigaria a esperar a
          * importação inteira de novo.
          */
+        /** Versão 6 → 7: comissão técnica. Aditiva. */
+        private val MIGRACAO_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS comissao (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        clubeId INTEGER NOT NULL,
+                        nome TEXT NOT NULL,
+                        cargo TEXT NOT NULL,
+                        competencia INTEGER NOT NULL,
+                        salarioSemanalEur INTEGER NOT NULL
+                    )
+                """)
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_comissao_clubeId " +
+                        "ON comissao(clubeId)")
+            }
+        }
+
+        /** Versão 5 → 6: inscrição de elenco por torneio. Aditiva. */
+        private val MIGRACAO_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS inscricoes (
+                        torneioId INTEGER NOT NULL,
+                        clubeId INTEGER NOT NULL,
+                        jogadorId INTEGER NOT NULL,
+                        PRIMARY KEY(torneioId, jogadorId)
+                    )
+                """)
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inscricoes_torneioId " +
+                        "ON inscricoes(torneioId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inscricoes_clubeId " +
+                        "ON inscricoes(clubeId)")
+            }
+        }
+
+        /** Versão 4 → 5: torneios customizados e palmarés. Aditiva. */
+        private val MIGRACAO_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS torneios (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        nome TEXT NOT NULL,
+                        temporada INTEGER NOT NULL,
+                        formato TEXT NOT NULL,
+                        clubes TEXT NOT NULL,
+                        grupos TEXT NOT NULL DEFAULT '',
+                        quantosPassam INTEGER NOT NULL DEFAULT 2,
+                        campeaoId INTEGER
+                    )
+                """)
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_torneios_temporada " +
+                        "ON torneios(temporada)")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS titulos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        clubeId INTEGER NOT NULL,
+                        nomeDaCompeticao TEXT NOT NULL,
+                        temporada INTEGER NOT NULL,
+                        tipo TEXT NOT NULL
+                    )
+                """)
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_titulos_clubeId " +
+                        "ON titulos(clubeId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_titulos_temporada " +
+                        "ON titulos(temporada)")
+            }
+        }
+
         /** Versão 3 → 4: retratos por temporada. Aditiva. */
         private val MIGRACAO_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -288,7 +449,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // Se um dia você quiser embutir o banco já pronto
                     // em vez de importar o CSV na primeira execução:
                     // .createFromAsset("fmanager.db")
-                    .addMigrations(MIGRACAO_1_2, MIGRACAO_2_3, MIGRACAO_3_4)
+                    .addMigrations(MIGRACAO_1_2, MIGRACAO_2_3, MIGRACAO_3_4, MIGRACAO_4_5, MIGRACAO_5_6, MIGRACAO_6_7)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instancia = it }

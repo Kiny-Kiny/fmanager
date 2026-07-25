@@ -8,6 +8,7 @@ import com.exemplo.fmanager.formacao.*
 import com.exemplo.fmanager.motor.*
 import com.exemplo.fmanager.rede.*
 import com.exemplo.fmanager.sistemas.*
+import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,6 +64,37 @@ data class EstadoJogo(
     val referenciaSemelhanca: Jogador? = null,
     val calibracao: String = "",
     val calibrando: Boolean = false,
+    // Torneios customizados e palmarés
+    val torneios: List<Torneio> = emptyList(),
+    val torneioAberto: Torneio? = null,
+    val gruposDoTorneio: List<Pair<String, List<LinhaTabela>>> = emptyList(),
+    val eliminatoriaDoTorneio: List<Partida> = emptyList(),
+    val proximaDoTorneio: Partida? = null,
+    val titulos: List<Titulo> = emptyList(),
+    val clubesParaTorneio: List<Clube> = emptyList(),
+    val inscritosNoTorneio: Set<Int> = emptySet(),
+    // Gestão humana
+    val climaVestiario: Int = 55,
+    val insatisfeitos: List<Pair<Jogador, EstadoMoral>> = emptyList(),
+    val comissao: List<MembroComissao> = emptyList(),
+    val folhaComissao: Long = 0,
+    val perguntasDaColetiva: List<Pergunta> = emptyList(),
+    val ultimaConversa: String = "",
+    // Modo online
+    val pvpServidor: String = "",
+    val pvpConectado: Boolean = false,
+    val pvpUsuarioId: String = "",
+    val pvpApelido: String = "",
+    val pvpPontos: Int = Elo.INICIAL,
+    val pvpDivisao: String = "Divisão 4",
+    val pvpVitorias: Int = 0,
+    val pvpEmpates: Int = 0,
+    val pvpDerrotas: Int = 0,
+    val pvpCustoElenco: Long = 0,
+    val pvpDesafios: List<Desafio> = emptyList(),
+    val pvpMeusDesafios: List<Desafio> = emptyList(),
+    val pvpClassificacao: List<RatingTecnico> = emptyList(),
+    val pvpAviso: String = "",
 )
 
 class JogoViewModel(app: Application) : AndroidViewModel(app) {
@@ -211,6 +243,10 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             .minOfOrNull { it.rodada } ?: (partidasCopa.maxOfOrNull { it.rodada } ?: 0)
 
         val tabelaLiga = Temporada.classificacao(clubesLiga, partidas)
+        val comissaoAtual = db.comissao().doClube(clube.id)
+        // O motor lê a moral daqui, sem tocar no banco durante a partida.
+        moraisConhecidas.clear()
+        contratos.forEach { (id, c) -> moraisConhecidas[id] = c.moral }
         val folha = db.contratos().folhaSalarial(clube.id)
         val expectativa = Diretoria.avaliar(
             clube = clube, todosDaLiga = clubesLiga, tabela = tabelaLiga,
@@ -271,6 +307,20 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             niveisObservacao = db.observacoes().ativas()
                 .associate { it.jogadorId to it.nivel },
             custoOlheiroSemanal = Olheiro.custoDe(db.observacoes().ativas()),
+            climaVestiario = Moral.climaDoVestiario(elenco, contratos),
+            insatisfeitos = Moral.insatisfeitos(elenco, contratos),
+            comissao = comissaoAtual,
+            folhaComissao = Comissao.folhaSemanal(comissaoAtual),
+            perguntasDaColetiva = Coletiva.perguntas(
+                posicao = tabelaLiga.indexOfFirst { it.clubeId == clube.id } + 1,
+                posicaoAlvo = expectativa.posicaoAlvo,
+                forma = formaRecente(partidas, clube.id),
+                viveNaCopa = Copa.aindaNaCopa(clube.id, partidasCopa),
+                climaVestiario = Moral.climaDoVestiario(elenco, contratos),
+                proximoEmCasa = db.partidas()
+                    .proximoJogo(carreira.temporada, clube.ligaId, clube.id)
+                    ?.mandanteId == clube.id,
+            ),
             totalRodadas = partidas.maxOfOrNull { it.rodada } ?: 0,
             ultimoResultado = _estado.value.ultimoResultado,
             entrosamento = CalculadoraEntrosamento.calcular(
@@ -423,6 +473,9 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Moral por jogador, para o motor consultar sem ir ao banco. */
+    private val moraisConhecidas = mutableMapOf<Int, Int>()
+
     /** Cache de escalação da IA: o mesmo clube joga igual na temporada. */
     private val escalacoesIA = mutableMapOf<Int, List<Slot>>()
 
@@ -439,8 +492,12 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Monta os 11 em campo, com a formação e o estilo de cada time. */
     private fun montarTime(
-        clubeId: Int, nome: String, elenco: List<Jogador>, tatica: Tatica,
+        clubeId: Int, nome: String, elencoBruto: List<Jogador>, tatica: Tatica,
+        inscritos: Set<Int>? = null,
     ): TimeEmCampo? {
+        // Lista fechada de torneio: quem não está inscrito não joga.
+        val elenco = if (inscritos.isNullOrEmpty()) elencoBruto
+        else elencoBruto.filter { it.id in inscritos }
         if (elenco.size < 11) return null
 
         // O meu time usa a minha formação. Cada adversário usa a
@@ -459,7 +516,11 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
                     .maxByOrNull { it.rendimentoEm(slot.papelPrincipal) }
                 ?: return null
             usados += j.id
-            JogadorEmCampo(j, slot, entrosamento.porJogador[slot.id] ?: 50)
+            JogadorEmCampo(
+                jogador = j, slot = slot,
+                entrosamento = entrosamento.porJogador[slot.id] ?: 50,
+                moral = moraisConhecidas[j.id] ?: 55,
+            )
         }
         // Reservas: quem sobrou do elenco, os melhores primeiro.
         val banco = elenco.filter { it.id !in usados }
@@ -580,6 +641,513 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             resolvidas, Copa.ID_COPA_NACIONAL, partida.temporada,
         )
         if (proxima.isNotEmpty()) db.partidas().inserirTodas(proxima)
+    }
+
+    // ------------------------------------------------ MODO ONLINE
+
+    private var backend: Backend? = null
+    private var pvp: Pvp? = null
+
+    /** Os 11 do PVP e a formação usada nele, separados da carreira. */
+    private var elencoPvp: List<Jogador> = emptyList()
+    private var slotsPvp: List<Slot> = formacaoPadrao()
+
+    fun testarServidor(url: String) = viewModelScope.launch {
+        val b = Backend(url.trimEnd('/'))
+        b.testar()
+            .onSuccess {
+                _estado.value = _estado.value.copy(
+                    pvpServidor = url, pvpAviso = "Servidor respondeu: $it")
+            }
+            .onFailure {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = "Não respondeu: ${it.message}")
+            }
+    }
+
+    fun criarContaPvp(url: String, email: String, senha: String, apelido: String) =
+        viewModelScope.launch {
+            val b = Backend(url.trimEnd('/'))
+            b.registrar(email, senha, apelido)
+                .onSuccess { entrarNoPvp(url, email, senha) }
+                .onFailure {
+                    _estado.value = _estado.value.copy(
+                        pvpAviso = "Falha ao criar conta: ${it.message}")
+                }
+        }
+
+    fun entrarNoPvp(url: String, email: String, senha: String) =
+        viewModelScope.launch {
+            val b = Backend(url.trimEnd('/'))
+            b.entrar(email, senha)
+                .onSuccess {
+                    backend = b
+                    pvp = Pvp(b)
+                    // Elenco inicial do PVP: sugestão dentro do orçamento.
+                    sugerirElencoPvp().join()
+                    _estado.value = _estado.value.copy(
+                        pvpServidor = url,
+                        pvpConectado = true,
+                        pvpUsuarioId = b.usuarioId ?: "",
+                        pvpApelido = b.apelido ?: "Técnico",
+                        pvpAviso = "",
+                    )
+                    buscarClassificacao()
+                }
+                .onFailure {
+                    _estado.value = _estado.value.copy(
+                        pvpAviso = "Não entrou: ${it.message}")
+                }
+        }
+
+    fun sairDoPvp() {
+        backend?.sair()
+        backend = null
+        pvp = null
+        _estado.value = _estado.value.copy(
+            pvpConectado = false, pvpAviso = "", pvpDesafios = emptyList())
+    }
+
+    /**
+     * Sugestão de elenco dentro do orçamento.
+     *
+     * Busca no acervo inteiro, não no seu clube: o PVP é orçamento igual
+     * para todos, então o universo tem que ser o mesmo para todos.
+     */
+    fun sugerirElencoPvp() = viewModelScope.launch {
+        val universo = withContext(Dispatchers.IO) {
+            db.jogadores().buscar(geralMin = 62, limite = 800)
+        }
+        slotsPvp = formacaoPadrao()
+        elencoPvp = withContext(Dispatchers.Default) {
+            MontadorPvp.sugerir(universo, slotsPvp)
+        }
+        _estado.value = _estado.value.copy(
+            pvpCustoElenco = Precos.totalDe(elencoPvp),
+            pvpAviso = "Elenco sugerido: ${elencoPvp.size} jogadores.",
+        )
+    }
+
+    fun publicarDesafio() = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        p.publicarDesafio(
+            elenco = elencoPvp, slots = slotsPvp,
+            tatica = _estado.value.tatica,
+            nomeDoTime = _estado.value.pvpApelido + " FC",
+        )
+            .onSuccess {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = "Desafio publicado. Alguém vai aceitar.")
+                buscarMeusDesafios()
+            }
+            .onFailure {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = it.message ?: "Falha ao publicar.")
+            }
+    }
+
+    fun buscarDesafios() = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        p.desafiosAbertos(_estado.value.pvpUsuarioId, _estado.value.pvpPontos)
+            .onSuccess { _estado.value = _estado.value.copy(pvpDesafios = it) }
+            .onFailure {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = "Falha ao buscar: ${it.message}")
+            }
+    }
+
+    fun buscarMeusDesafios() = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        p.meusDesafios(_estado.value.pvpUsuarioId)
+            .onSuccess { _estado.value = _estado.value.copy(pvpMeusDesafios = it) }
+    }
+
+    fun buscarClassificacao() = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        p.classificacao().onSuccess { lista ->
+            val eu = lista.firstOrNull { it.id == _estado.value.pvpUsuarioId }
+            _estado.value = _estado.value.copy(
+                pvpClassificacao = lista,
+                pvpPontos = eu?.pontos ?: Elo.INICIAL,
+                pvpDivisao = eu?.divisao ?: "Divisão 4",
+                pvpVitorias = eu?.vitorias ?: 0,
+                pvpEmpates = eu?.empates ?: 0,
+                pvpDerrotas = eu?.derrotas ?: 0,
+            )
+        }
+    }
+
+    fun aceitarDesafio(d: Desafio) = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        p.aceitar(d, elencoPvp, slotsPvp, _estado.value.tatica,
+            _estado.value.pvpApelido + " FC")
+            .onSuccess {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = "Desafio aceito. Simule para valer o resultado.")
+                buscarMeusDesafios()
+            }
+            .onFailure {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = it.message ?: "Falha ao aceitar.")
+            }
+    }
+
+    /**
+     * Simula e envia. A partida roda no seu aparelho e no do adversário
+     * com a MESMA semente — o servidor só compara as assinaturas.
+     */
+    fun simularDesafio(d: Desafio) = viewModelScope.launch {
+        val p = pvp ?: return@launch
+        val partida = p.montarPartida(d)
+        if (partida == null) {
+            _estado.value = _estado.value.copy(
+                pvpAviso = "Não foi possível montar a partida.")
+            return@launch
+        }
+
+        val resultado = withContext(Dispatchers.Default) {
+            partida.pularParaOFim()
+            partida.resultado()
+        }
+
+        val souDono = d.donoId == _estado.value.pvpUsuarioId
+        p.enviarResultado(d, resultado, souDono)
+            .onSuccess { estado ->
+                val meus = if (souDono) resultado.golsMandante
+                else resultado.golsVisitante
+                val dele = if (souDono) resultado.golsVisitante
+                else resultado.golsMandante
+
+                if (estado == EstadoDesafio.CONFIRMADO) {
+                    p.registrarResultado(
+                        meusPontos = _estado.value.pvpPontos,
+                        pontosDoOutro = d.donoPontos,
+                        meusGols = meus, golsDele = dele,
+                        vitoriasAtuais = _estado.value.pvpVitorias,
+                        empatesAtuais = _estado.value.pvpEmpates,
+                        derrotasAtuais = _estado.value.pvpDerrotas,
+                    )
+                    buscarClassificacao()
+                }
+
+                _estado.value = _estado.value.copy(
+                    ultimoResultado = resultado,
+                    pvpAviso = when (estado) {
+                        EstadoDesafio.CONFIRMADO ->
+                            "Resultado confirmado: $meus x $dele."
+                        EstadoDesafio.EM_DISPUTA ->
+                            "Os resultados divergiram. Partida anulada."
+                        else -> "Resultado enviado: $meus x $dele. " +
+                                "Aguardando o adversário simular."
+                    },
+                )
+                buscarMeusDesafios()
+            }
+            .onFailure {
+                _estado.value = _estado.value.copy(
+                    pvpAviso = "Falha ao enviar: ${it.message}")
+            }
+    }
+
+    // ------------------------------------------ GESTÃO HUMANA
+
+    fun conversar(jogador: Jogador, assunto: AssuntoConversa) =
+        viewModelScope.launch {
+            val contrato = db.contratos().doJogador(jogador.id) ?: return@launch
+            val stats = db.estatisticas()
+                .de(jogador.id, _estado.value.carreira?.temporada ?: 1)
+
+            val r = ConversaComJogador.conversar(
+                assunto = assunto,
+                jogador = jogador,
+                contrato = contrato,
+                minutosRecentes = (stats?.jogos ?: 0) * 70,
+                notaMedia = stats?.notaMedia ?: 0f,
+                melhorDoElenco = _estado.value.elenco
+                    .maxByOrNull { it.geral }?.id == jogador.id,
+            )
+
+            db.contratos().salvar(
+                contrato.copy(moral = (contrato.moral + r.deltaMoral).coerceIn(0, 100))
+            )
+            _estado.value = _estado.value.copy(ultimaConversa = r.texto)
+            carregarTudo()
+        }
+
+    fun assuntosDisponiveis(jogador: Jogador): List<AssuntoConversa> {
+        val c = _estado.value.contratos[jogador.id] ?: return emptyList()
+        return ConversaComJogador.assuntosPara(
+            jogador, c, minutosRecentes = 200, notaMedia = 6.5f,
+            temporadaAtual = _estado.value.carreira?.temporada ?: 1,
+        )
+    }
+
+    /**
+     * Responder a imprensa afeta três coisas ao mesmo tempo: o vestiário,
+     * a diretoria e a torcida. Nenhum tom agrada os três.
+     */
+    fun responderColetiva(pergunta: Pergunta, tom: TomDaResposta) =
+        viewModelScope.launch {
+            val e = _estado.value
+            val clube = e.clube ?: return@launch
+            val vaiBem = e.posicao in 1..(e.expectativa?.posicaoAlvo ?: 20)
+
+            val efeito = Coletiva.responder(pergunta, tom, vaiBem)
+
+            // Moral do elenco inteiro se move junto.
+            val contratos = db.contratos().doClube(clube.id)
+            db.contratos().salvarTodos(contratos.map {
+                it.copy(moral = (it.moral + efeito.deltaMoralElenco)
+                    .coerceIn(0, 100))
+            })
+
+            _estado.value = _estado.value.copy(ultimaConversa = efeito.comentario)
+            carregarTudo()
+        }
+
+    fun candidatosParaCargo(cargo: Cargo): List<MembroComissao> {
+        val clube = _estado.value.clube ?: return emptyList()
+        return Comissao.candidatos(cargo, clube.reputacao, clube.id.toLong())
+    }
+
+    fun contratarStaff(m: MembroComissao) = viewModelScope.launch {
+        val clube = _estado.value.clube ?: return@launch
+        // Um cargo, uma pessoa: contratar substitui quem estava.
+        db.comissao().demitirDoCargo(clube.id, m.cargo.name)
+        db.comissao().contratar(m.copy(id = 0, clubeId = clube.id))
+        carregarTudo()
+    }
+
+    fun demitirStaff(m: MembroComissao) = viewModelScope.launch {
+        db.comissao().demitir(m.id)
+        carregarTudo()
+    }
+
+    /** Renovação de contrato. Moral baixa fecha a porta. */
+    suspend fun renovar(jogador: Jogador, aumento: Float): String {
+        val contrato = db.contratos().doJogador(jogador.id)
+            ?: return "Contrato não encontrado."
+        val temporada = _estado.value.carreira?.temporada ?: 1
+
+        if (!Moral.aceitaRenovar(contrato.moral, aumento)) {
+            return "${jogador.nome} recusou. " +
+                    if (contrato.moral < 30)
+                        "Ele está insatisfeito e não quer ficar."
+                    else "A proposta não é suficiente."
+        }
+
+        val novoSalario = (contrato.salarioSemanalEur * aumento).toLong()
+        db.contratos().salvar(
+            contrato.copy(
+                salarioSemanalEur = novoSalario,
+                terminaEmTemporada = temporada + 4,
+                moral = (contrato.moral + 6).coerceAtMost(100),
+            )
+        )
+        carregarTudo()
+        return "${jogador.nome} renovou até T${temporada + 4} por " +
+                "${novoSalario / 1000}K por semana."
+    }
+
+    // ----------------------------------------------- TORNEIOS
+
+    /** Clubes disponíveis para montar um torneio: os melhores de todas
+     *  as ligas, para dar de escolher sem listar 700 nomes. */
+    fun carregarClubesParaTorneio() = viewModelScope.launch {
+        _estado.value = _estado.value.copy(
+            clubesParaTorneio = db.clubes().todos(240)
+        )
+    }
+
+    /**
+     * Cria o torneio, faz o sorteio com potes e gera a fase de grupos.
+     *
+     * O sorteio é semeado pelo instante da criação, então cada torneio
+     * novo dá um chaveamento diferente — mas o mesmo torneio, uma vez
+     * criado, tem grupos estáveis.
+     */
+    fun criarTorneio(
+        nome: String,
+        formato: FormatoTorneio,
+        clubesEscolhidos: List<Clube>,
+        quantidadeDeGrupos: Int,
+        quantosPassam: Int = 2,
+    ) = viewModelScope.launch {
+        if (clubesEscolhidos.size < 4) return@launch
+        val temporada = db.carreira().atual()?.temporada ?: 1
+
+        val grupos = if (formato == FormatoTorneio.GRUPOS_E_ELIMINATORIA)
+            Torneios.sortearGrupos(clubesEscolhidos, quantidadeDeGrupos)
+        else emptyList()
+
+        val torneio = Torneio(
+            nome = nome.ifBlank { "Torneio" },
+            temporada = temporada,
+            formato = formato.name,
+            clubes = clubesEscolhidos.joinToString(",") { it.id.toString() },
+            grupos = grupos.joinToString(";") { g ->
+                g.joinToString(",") { it.id.toString() }
+            },
+            quantosPassam = quantosPassam,
+        )
+        val id = db.torneios().criar(torneio).toInt()
+        val salvo = torneio.copy(id = id)
+
+        val jogos = when (formato) {
+            FormatoTorneio.GRUPOS_E_ELIMINATORIA -> Torneios.jogosDaFaseDeGrupos(
+                grupos.map { g -> g.map { it.id } },
+                salvo.ligaIdVirtual, temporada,
+            )
+            FormatoTorneio.ELIMINATORIA -> Torneios.primeiraEliminatoria(
+                clubesEscolhidos.sortedByDescending { it.reputacao }.map { it.id },
+                salvo.ligaIdVirtual, temporada,
+            )
+            FormatoTorneio.PONTOS_CORRIDOS -> Temporada.gerarCalendario(
+                clubesEscolhidos, salvo.ligaIdVirtual, temporada,
+            ).filter { it.rodada <= clubesEscolhidos.size - 1 }   // turno único
+        }
+        db.partidas().inserirTodas(jogos)
+        abrirTorneio(salvo)
+        carregarTorneios()
+    }
+
+    fun carregarTorneios() = viewModelScope.launch {
+        _estado.value = _estado.value.copy(torneios = db.torneios().todos())
+    }
+
+    fun abrirTorneio(t: Torneio) = viewModelScope.launch {
+        val partidas = db.partidas().daTemporada(t.temporada, t.ligaIdVirtual)
+        val clubes = t.idsClubes().mapNotNull { db.clubes().porId(it) }
+        val porId = clubes.associateBy { it.id }
+
+        val grupos = t.gruposMontados().mapIndexed { i, ids ->
+            val doGrupo = ids.mapNotNull { porId[it] }
+            ('A' + i).toString() to Torneios.tabelaDoGrupo(doGrupo, partidas)
+        }
+
+        val meuId = _estado.value.clube?.id
+        carregarInscricao(t)
+        _estado.value = _estado.value.copy(
+            torneioAberto = t,
+            gruposDoTorneio = grupos,
+            eliminatoriaDoTorneio = partidas
+                .filter { it.rodada > Torneios.BASE_ELIMINATORIA }
+                .sortedBy { it.rodada },
+            proximaDoTorneio = partidas.firstOrNull {
+                it.golsMandante == null &&
+                        (it.mandanteId == meuId || it.visitanteId == meuId)
+            },
+        )
+    }
+
+    /**
+     * Resolve a fase atual do torneio e avança para a próxima.
+     *
+     * Simula tudo que ainda não foi jogado na fase, e se a eliminatória
+     * acabou registra o campeão no palmarés.
+     */
+    fun avancarTorneio(t: Torneio) = viewModelScope.launch {
+        val partidas = db.partidas().daTemporada(t.temporada, t.ligaIdVirtual)
+        val aJogar = partidas.filter { it.golsMandante == null }
+
+        withContext(Dispatchers.Default) {
+            aJogar.forEach { p ->
+                val casa = db.clubes().porId(p.mandanteId) ?: return@forEach
+                val fora = db.clubes().porId(p.visitanteId) ?: return@forEach
+                clubesConhecidos[casa.id] = casa
+                clubesConhecidos[fora.id] = fora
+                val ec = db.jogadores().elenco(casa.id)
+                val ef = db.jogadores().elenco(fora.id)
+                // A inscrição só vale para o clube do usuário: a IA não
+                // fecha lista, e obrigá-la a isso só criaria times
+                // incompletos sem ganho de jogabilidade.
+                val meuId = _estado.value.clube?.id
+                val inscritosCasa = if (casa.id == meuId)
+                    db.inscricoes().ids(t.id, casa.id).toSet() else null
+                val inscritosFora = if (fora.id == meuId)
+                    db.inscricoes().ids(t.id, fora.id).toSet() else null
+
+                val tc = montarTime(casa.id, casa.nome, ec,
+                    TreinadorIA.taticaPara(casa, ec), inscritosCasa)
+                    ?: return@forEach
+                val tf = montarTime(fora.id, fora.nome, ef,
+                    TreinadorIA.taticaPara(fora, ef), inscritosFora)
+                    ?: return@forEach
+                val r = motor.simular(tc, tf)
+                db.partidas().atualizar(p.copy(
+                    golsMandante = r.golsMandante,
+                    golsVisitante = r.golsVisitante,
+                ))
+            }
+        }
+
+        val resolvidas = db.partidas().daTemporada(t.temporada, t.ligaIdVirtual)
+        val clubes = t.idsClubes().mapNotNull { db.clubes().porId(it) }
+        val porId = clubes.associateBy { it.id }
+
+        val eliminatorias = resolvidas.filter { it.rodada > Torneios.BASE_ELIMINATORIA }
+
+        val novos = if (eliminatorias.isEmpty()) {
+            // Grupos terminaram: monta a primeira eliminatória.
+            val classificados = Torneios.classificados(
+                t.gruposMontados().map { ids -> ids.mapNotNull { porId[it] } },
+                resolvidas, t.quantosPassam,
+            )
+            Torneios.primeiraEliminatoria(classificados, t.ligaIdVirtual, t.temporada)
+        } else {
+            val ultima = eliminatorias.filter {
+                it.rodada == eliminatorias.maxOf { p -> p.rodada }
+            }
+            Torneios.proximaEliminatoria(ultima, t.ligaIdVirtual, t.temporada)
+        }
+
+        if (novos.isNotEmpty()) {
+            db.partidas().inserirTodas(novos)
+        } else {
+            Torneios.campeao(resolvidas)?.let { campeao ->
+                if (db.titulos().jaRegistrado(campeao, t.nome, t.temporada) == 0) {
+                    db.titulos().registrar(
+                        Titulo(clubeId = campeao, nomeDaCompeticao = t.nome,
+                            temporada = t.temporada, tipo = "torneio")
+                    )
+                }
+                db.torneios().atualizar(t.copy(campeaoId = campeao))
+            }
+        }
+
+        abrirTorneio(db.torneios().porId(t.id) ?: t)
+        carregarTorneios()
+    }
+
+    /** Carrega quem está inscrito no torneio aberto. */
+    fun carregarInscricao(t: Torneio) = viewModelScope.launch {
+        val clube = _estado.value.clube ?: return@launch
+        _estado.value = _estado.value.copy(
+            inscritosNoTorneio = db.inscricoes().ids(t.id, clube.id).toSet()
+        )
+    }
+
+    /**
+     * Fecha a lista para o torneio. Substitui a anterior inteira: meia
+     * inscrição não existe, ou a lista está válida ou não está.
+     */
+    fun inscreverElenco(t: Torneio, jogadores: List<Jogador>) =
+        viewModelScope.launch {
+            val clube = _estado.value.clube ?: return@launch
+            if (jogadores.size < Inscricoes.MINIMO) return@launch
+
+            db.inscricoes().limpar(t.id, clube.id)
+            db.inscricoes().inscrever(
+                jogadores.take(Inscricoes.VAGAS).map {
+                    Inscricao(t.id, clube.id, it.id)
+                }
+            )
+            carregarInscricao(t)
+        }
+
+    fun carregarTitulos() = viewModelScope.launch {
+        val clube = _estado.value.clube ?: return@launch
+        _estado.value = _estado.value.copy(titulos = db.titulos().doClube(clube.id))
     }
 
     // ---------------------------------------------- CALIBRAÇÃO
@@ -909,8 +1477,20 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
     fun treinarElenco(foco: FocoTreino, intensidade: Intensidade) =
         viewModelScope.launch {
             val elenco = _estado.value.elenco
+            // A comissão multiplica o que o treino rende. Sem auxiliar,
+            // o time treina a 82% do que treinaria com uma comissão boa.
+            val fator = Comissao.fatorDeTreino(_estado.value.comissao, foco)
             val atualizados = withContext(Dispatchers.Default) {
-                elenco.map { Treino.semana(it, foco, intensidade).jogador }
+                elenco.map { j ->
+                    var r = Treino.semana(j, foco, intensidade).jogador
+                    // Aplica o fator repetindo o treino quando a comissão é
+                    // boa, e pulando quando é ruim — mantém a evolução
+                    // discreta em vez de criar frações de atributo.
+                    if (fator > 1.05f && Random.nextFloat() < (fator - 1f) * 3f) {
+                        r = Treino.semana(r, foco, intensidade).jogador
+                    }
+                    r
+                }
             }
             db.jogadores().inserirTodos(atualizados)
             avancarSemanaDeObservacao()

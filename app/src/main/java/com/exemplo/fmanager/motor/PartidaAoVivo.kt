@@ -6,6 +6,7 @@ import com.exemplo.fmanager.dados.rendimentoEm
 import com.exemplo.fmanager.dados.tracos
 import com.exemplo.fmanager.formacao.*
 import com.exemplo.fmanager.sistemas.CalculadoraEntrosamento
+import com.exemplo.fmanager.sistemas.Moral
 import com.exemplo.fmanager.sistemas.TreinadorIA
 import com.exemplo.fmanager.formacao.InstrucaoEquipe
 import kotlin.math.abs
@@ -37,6 +38,8 @@ data class JogadorEmCampo(
     val jogador: Jogador,
     val slot: Slot,
     val entrosamento: Int = 50,
+    /** Moral vinda do contrato. Antes esse número existia e não fazia nada. */
+    val moral: Int = 55,
 ) {
     val estilo = slot.estilo
     val mod = estilo.modificador()
@@ -45,7 +48,8 @@ data class JogadorEmCampo(
     fun eficiencia(fase: Fase): Float {
         val papel = slot.em(fase).papel
         return (jogador.rendimentoEm(papel) / 100f) *
-                CalculadoraEntrosamento.multiplicador(entrosamento)
+                CalculadoraEntrosamento.multiplicador(entrosamento) *
+                Moral.multiplicador(moral)
     }
 }
 
@@ -189,6 +193,33 @@ class PartidaAoVivo(
         .associate { it.jogador.id to 100f }.toMutableMap()
     private val contribuicao = mutableMapOf<Int, Float>()
     private val golsPor = mutableMapOf<Int, Int>()
+
+    /** Números por jogador, atualizados lance a lance. */
+    private val porJogador = mutableMapOf<Int, AcumuladorJogador>()
+
+    private fun acc(jc: JogadorEmCampo, doMandante: Boolean): AcumuladorJogador =
+        porJogador.getOrPut(jc.jogador.id) {
+            AcumuladorJogador(
+                jogadorId = jc.jogador.id,
+                nome = jc.jogador.nome,
+                sigla = jc.slot.em(Fase.SEM_POSSE).papel.sigla,
+                doMandante = doMandante,
+            ).also { it.entrouNoMinuto = minuto }
+        }
+
+    private fun accDoPortador() = acc(portador, atacante === casa)
+
+    /**
+     * Estatística de cada jogador em campo, pronta para a tela.
+     *
+     * Ordenada pela nota: quem está mal aparece embaixo, e é exatamente
+     * quem você precisa ver quando pensa em substituir.
+     */
+    fun estatisticasPorJogador(apenasMandante: Boolean? = null): List<EstatisticaAoVivo> =
+        porJogador.values
+            .filter { apenasMandante == null || it.doMandante == apenasMandante }
+            .map { it.paraLeitura(minuto, gas[it.jogadorId]?.toInt() ?: 100) }
+            .sortedByDescending { it.nota }
     private val assistPor = mutableMapOf<Int, Int>()
     private val participaram = mutableSetOf<Int>()
 
@@ -331,6 +362,8 @@ class PartidaAoVivo(
         e.substituicoes++
         gas[entra.id] = 100f
         participaram += entra.id
+        porJogador[sai]?.saiuNoMinuto = minuto
+        acc(e.emCampo[indice], e === casa)
         e.recalcular()
 
         if (portador.jogador.id == sai) portador = e.emCampo[indice]
@@ -421,6 +454,8 @@ class PartidaAoVivo(
 
         passeDe = posicaoAbsoluta(portador, atacante)
         atacante.stats = atacante.stats.copy(passes = atacante.stats.passes + 1)
+        val accPasse = accDoPortador()
+        accPasse.passes++
         // Toque curto consome pouco tempo; lançamento consome mais. É
         // isso que faz um time de posse dar 500 passes e um de ligação
         // direta dar 300.
@@ -452,6 +487,7 @@ class PartidaAoVivo(
 
         atacante.stats = atacante.stats.copy(
             passesCertos = atacante.stats.passesCertos + 1)
+        accPasse.passesCertos++
         contribuicao.merge(portador.jogador.id, 0.02f, Float::plus)
 
         val de = portador.jogador.nome
@@ -507,6 +543,8 @@ class PartidaAoVivo(
 
     private fun errarPasse(defensor: Equipe, interceptador: JogadorEmCampo?): Lance {
         val de = portador.jogador.nome
+        accDoPortador().bolasPerdidas++
+        interceptador?.let { acc(it, defensor === casa).desarmes++ }
         interceptador?.let {
             defensor.stats = defensor.stats.copy(
                 desarmes = defensor.stats.desarmes + 1)
@@ -552,6 +590,7 @@ class PartidaAoVivo(
         }
 
         defensor.stats = defensor.stats.copy(desarmes = defensor.stats.desarmes + 1)
+        acc(marcador, defensor === casa).desarmes++
         dueloPendente = portador.jogador.id to marcador.jogador.id
         trocarPosse(defensor, marcador)
         return Lance.Drible(minuto, atacante.time.nome, autor, nomeMarcador, false)
@@ -584,6 +623,8 @@ class PartidaAoVivo(
         defensor: Equipe, infrator: JogadorEmCampo, vitima: JogadorEmCampo,
     ): Lance {
         defensor.stats = defensor.stats.copy(faltas = defensor.stats.faltas + 1)
+        acc(infrator, defensor === casa).faltasCometidas++
+        acc(vitima, atacante === casa).faltasSofridas++
         val avanco = (posicaoDeAtaque(vitima) + avancoConducao).coerceIn(0f, 1f)
         val central = abs(posicaoDoLado(vitima) - 0.5f) < 0.22f
 
@@ -678,11 +719,13 @@ class PartidaAoVivo(
 
         if (segundoAmarelo || rng.nextFloat() < 0.05f) {
             equipe.expulsos += id
+            acc(jc, equipe === casa).vermelho = true
             equipe.stats = equipe.stats.copy(vermelhos = equipe.stats.vermelhos + 1)
             equipe.recalcular()
             historico += Lance.Cartao(minuto, equipe.time.nome, jc.jogador.nome, true)
         } else {
             equipe.amarelados += id
+            acc(jc, equipe === casa).amarelo = true
             equipe.stats = equipe.stats.copy(amarelos = equipe.stats.amarelos + 1)
             historico += Lance.Cartao(minuto, equipe.time.nome, jc.jogador.nome, false)
         }
@@ -692,6 +735,8 @@ class PartidaAoVivo(
 
     private fun finalizar(defensor: Equipe, avanco: Float): Lance {
         atacante.stats = atacante.stats.copy(chutes = atacante.stats.chutes + 1)
+        val accChute = accDoPortador()
+        accChute.finalizacoes++
         contribuicao.merge(portador.jogador.id, 0.25f, Float::plus)
         avancarRelogio(5)
 
@@ -733,6 +778,7 @@ class PartidaAoVivo(
         if (desfecho == Lance.Desfecho.DEFENDIDO) {
             atacante.stats = atacante.stats.copy(
                 chutesNoGol = atacante.stats.chutesNoGol + 1)
+            accChute.finalizacoesNoGol++
             trocarPosse(defensor)
             avancarRelogio(12)
         } else if (desfecho == Lance.Desfecho.BLOQUEADO) {
@@ -813,9 +859,11 @@ class PartidaAoVivo(
             chutesNoGol = atacante.stats.chutesNoGol + 1)
         contribuicao.merge(autor.jogador.id, 1.7f, Float::plus)
         golsPor.merge(autor.jogador.id, 1, Int::plus)
+        acc(autor, atacante === casa).let { it.gols++; it.finalizacoesNoGol++ }
         assistente?.let {
             contribuicao.merge(it.jogador.id, 1.0f, Float::plus)
             assistPor.merge(it.jogador.id, 1, Int::plus)
+            acc(it, atacante === casa).assistencias++
         }
         avancarRelogio(55)
         trocarPosse(defensor)

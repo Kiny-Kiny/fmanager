@@ -155,6 +155,30 @@ fun TelaPainel(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Secao("Forma recente")
                 Forma(e.forma)
+
+                if (e.insatisfeitos.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        Modifier.fillMaxWidth().clickable { irPara("vestiario") },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Erro.copy(alpha = .12f),
+                    ) {
+                        Row(Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${e.insatisfeitos.size} jogador(es) " +
+                                        "insatisfeito(s)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Erro)
+                                Text(e.insatisfeitos.take(3)
+                                    .joinToString(", ") { it.first.nome },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextoFraco, maxLines = 1)
+                            }
+                            Text("→", color = Erro)
+                        }
+                    }
+                }
             }
         }
 
@@ -272,6 +296,7 @@ fun TelaPainel(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Secao("Mais")
                 listOf(
+                    "vestiario" to "Vestiário, imprensa e comissão",
                     "olheiro" to "Olheiros e relatórios",
                     "analise" to "Análise: evolução, garimpo, parecidos",
                     "elenco" to "Elenco completo",
@@ -279,6 +304,7 @@ fun TelaPainel(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
                     "tabela" to "Classificação",
                     "artilharia" to "Artilharia",
                     "copa" to "Copa Nacional",
+                    "torneios" to "Torneios e palmarés",
                     "online" to "Jogar contra alguém na sua rede",
                 ).forEach { (r, rotulo) ->
                     Surface(

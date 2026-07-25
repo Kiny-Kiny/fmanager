@@ -59,6 +59,11 @@ data class Quadro(
     val impedidos: Set<Int>,
     val linhaDefensivaCasa: Float,
     val linhaDefensivaFora: Float,
+    /** Posições recentes da bola, da mais antiga para a mais nova. */
+    val rastroBola: List<Ponto> = emptyList(),
+    /** 0 rasteira · 1 no ponto alto do lançamento. */
+    val alturaBola: Float = 0f,
+    val bolaEmVoo: Boolean = false,
 )
 
 class CampoFisico(
@@ -70,9 +75,45 @@ class CampoFisico(
     private val numeros = HashMap<Int, Int>()
 
     private var bola = Ponto(0.5f, 0.5f)
-    private var bolaAlvo = Ponto(0.5f, 0.5f)
     private var duelo: Pair<Int, Int>? = null
     private var duracaoDuelo = 0f
+
+    /*
+     * VOO DA BOLA.
+     *
+     * A versão anterior movia a bola por "velocidade × dt de jogo". A 8x
+     * isso dava 28 ms para atravessar 30% do campo — o olho não lê como
+     * movimento, lê como teletransporte.
+     *
+     * Agora a bola tem um VOO: origem, destino e duração com PISO EM
+     * TEMPO REAL. Mesmo a 20x o passe leva no mínimo 0,20 s de tempo de
+     * relógio, então sempre se vê a bola viajando.
+     */
+    private var vooOrigem = Ponto(0.5f, 0.5f)
+    private var vooDestino = Ponto(0.5f, 0.5f)
+    private var vooProgresso = 1f
+    private var vooDuracao = 0.3f
+    private var vooAltura = 0f
+    private var portadorAnterior: Int? = null
+
+    /** Altura visual atual da bola: 0 rasteira, 1 no alto do lançamento. */
+    val alturaDaBola: Float
+        get() {
+            if (vooProgresso >= 1f) return 0f
+            // Parábola: sobe e desce ao longo do voo.
+            val t = vooProgresso
+            return vooAltura * (4f * t * (1f - t))
+        }
+
+    val emVoo: Boolean get() = vooProgresso < 1f
+
+    /** Rastro dos últimos instantes, para leitura de movimento. */
+    private val rastroBola = ArrayDeque<Ponto>()
+    private val rastroPecas = HashMap<Int, ArrayDeque<Ponto>>()
+    private var acumuladorRastro = 0f
+
+    fun rastroDaBola(): List<Ponto> = rastroBola.toList()
+    fun rastroDe(id: Int): List<Ponto> = rastroPecas[id]?.toList() ?: emptyList()
 
     /** Velocidade máxima em fração de campo por segundo. */
     private fun velocidadeDe(jc: JogadorEmCampo): Float {
@@ -183,16 +224,16 @@ class CampoFisico(
      */
     fun avancar(
         dt: Float,
+        dtReal: Float,
+        multiplicadorRitmo: Float = 1f,
         mandanteComBola: Boolean,
         portadorId: Int?,
-        alvoDaBola: Ponto,
         alturaLinhaCasa: Float,
         alturaLinhaFora: Float,
         compactacaoCasa: Float,
         compactacaoFora: Float,
     ) {
         garantirInicio(mandanteComBola)
-        bolaAlvo = alvoDaBola
 
         val casa = obterCasa()
         val fora = obterFora()
@@ -246,17 +287,85 @@ class CampoFisico(
             }
         }
 
-        // A bola vai para o alvo mais rápido que gente, mas não instantâneo.
-        val dBola = bolaAlvo - bola
-        val distBola = dBola.comprimento
-        if (distBola > 0.001f) {
-            val vBola = 0.85f + distBola * 1.6f
-            val passo = (vBola * dt).coerceAtMost(distBola)
-            bola = bola + dBola * (passo / distBola)
+        // ------------------------------------------------- BOLA
+        /*
+         * A bola é ancorada na posição FÍSICA do portador, não na do
+         * slot. Esse era o bug mais grave: o alvo vinha do slot, e o
+         * jogador estava caminhando para lá — a bola perseguia um ponto
+         * onde ninguém estava.
+         */
+        val posPortador = portadorId?.let { pos[it] }
+
+        // Troca de portador = novo passe = novo voo.
+        if (portadorId != null && portadorId != portadorAnterior) {
+            val origem = portadorAnterior?.let { pos[it] } ?: bola
+            val destino = posPortador ?: bola
+            iniciarVoo(origem, destino, multiplicadorRitmo)
+            portadorAnterior = portadorId
         }
 
-        duracaoDuelo = (duracaoDuelo - dt).coerceAtLeast(0f)
+        if (vooProgresso < 1f) {
+            vooProgresso = (vooProgresso + dtReal / vooDuracao).coerceAtMost(1f)
+            // Desaceleração no fim: passe chega "morrendo", como no campo.
+            val t = vooProgresso
+            val suave = 1f - (1f - t) * (1f - t)
+            // O destino acompanha o portador enquanto a bola voa.
+            val destinoAtual = posPortador ?: vooDestino
+            bola = vooOrigem + (destinoAtual - vooOrigem) * suave
+        } else if (posPortador != null) {
+            // Sem voo: a bola fica no pé, com uma oscilação de condução.
+            oscilacao += dtReal * 7f
+            val giro = Ponto(
+                kotlin.math.cos(oscilacao) * 0.006f,
+                kotlin.math.sin(oscilacao * 1.3f) * 0.006f,
+            )
+            val alvo = posPortador + giro
+            val d = alvo - bola
+            val passo = (0.9f * dtReal).coerceAtMost(d.comprimento)
+            if (d.comprimento > 0.0005f) bola = bola + d * (passo / d.comprimento)
+        }
+
+        // ---------------------------------------------- RASTROS
+        acumuladorRastro += dtReal
+        if (acumuladorRastro >= 0.030f) {
+            acumuladorRastro = 0f
+            rastroBola.addLast(bola)
+            while (rastroBola.size > 12) rastroBola.removeFirst()
+            pos.forEach { (id, p) ->
+                val fila = rastroPecas.getOrPut(id) { ArrayDeque() }
+                fila.addLast(p)
+                while (fila.size > 6) fila.removeFirst()
+            }
+        }
+
+        duracaoDuelo = (duracaoDuelo - dtReal).coerceAtLeast(0f)
         if (duracaoDuelo <= 0f) duelo = null
+    }
+
+    private var oscilacao = 0f
+
+    /**
+     * Começa um voo. A duração tem PISO em tempo real: mesmo a 20x o
+     * passe leva no mínimo 0,20 s de relógio, então sempre se vê a bola
+     * saindo de um pé e chegando no outro.
+     */
+    private fun iniciarVoo(origem: Ponto, destino: Ponto, ritmo: Float) {
+        val distancia = (destino - origem).comprimento
+        vooOrigem = origem
+        vooDestino = destino
+        vooProgresso = 0f
+
+        /*
+         * O tempo de voo encurta com o ritmo, mas pela RAIZ, não
+         * linearmente — e com piso de 0,17 s. A 20x o passe fica rápido
+         * sem voltar a teletransportar, e os jogadores (que aceleram
+         * linearmente) não parecem descolados da bola.
+         */
+        val base = 0.22f + distancia * 1.20f
+        vooDuracao = (base / kotlin.math.sqrt(ritmo.coerceAtLeast(1f)))
+            .coerceIn(0.17f, 0.85f)
+        // Bola longa sobe; toque curto vai rasteiro.
+        vooAltura = ((distancia - 0.14f) / 0.45f).coerceIn(0f, 1f)
     }
 
     /** Marca um duelo visível por um instante: desarme, drible, falta. */
@@ -335,6 +444,9 @@ class CampoFisico(
         return Quadro(
             pecas = pecas,
             bola = bola,
+            rastroBola = rastroBola.toList(),
+            alturaBola = alturaDaBola,
+            bolaEmVoo = emVoo,
             impedimentoParaMandante = impMandante,
             impedimentoParaVisitante = impVisitante,
             impedidos = impedidos,

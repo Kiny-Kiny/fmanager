@@ -33,6 +33,7 @@ private enum class Aba(val rota: String, val rotulo: String, val icone: String) 
     ESCALACAO("escalacao", "Time", "◈"),
     TATICAS("taticas", "Táticas", "◎"),
     MERCADO("mercado", "Mercado", "⇄"),
+    PVP("pvp", "Online", "⚔"),
     INBOX("inbox", "Caixa", "✉"),
 }
 
@@ -110,10 +111,21 @@ fun App(vm: JogoViewModel = viewModel()) {
                 )
             }
         },
-        bottomBar = {
-            NavigationBar(containerColor = Superficie, tonalElevation = 0.dp) {
+    ) { padding ->
+        /*
+         * Em tela deitada a ALTURA é o recurso escasso. Gastar 80dp dela
+         * com uma barra embaixo é desperdício, então a navegação virou um
+         * trilho na lateral — que é a orientação natural do gesto quando
+         * o aparelho está de lado.
+         */
+        Row(Modifier.padding(padding).fillMaxSize()) {
+            NavigationRail(
+                containerColor = Superficie,
+                modifier = Modifier.width(76.dp),
+            ) {
+                Spacer(Modifier.height(6.dp))
                 Aba.entries.forEach { aba ->
-                    NavigationBarItem(
+                    NavigationRailItem(
                         selected = rota == aba.rota,
                         onClick = { rota = aba.rota },
                         icon = {
@@ -122,17 +134,17 @@ fun App(vm: JogoViewModel = viewModel()) {
                                     Badge(containerColor = Erro) {
                                         Text("$urgentes", fontSize = 9.sp)
                                     }
-                                }) { Text(aba.icone, fontSize = 17.sp) }
+                                }) { Text(aba.icone, fontSize = 18.sp) }
                             } else {
-                                Text(aba.icone, fontSize = 17.sp)
+                                Text(aba.icone, fontSize = 18.sp)
                             }
                         },
                         label = {
-                            Text(aba.rotulo, fontSize = 10.sp,
+                            Text(aba.rotulo, fontSize = 9.sp,
                                 fontWeight = if (rota == aba.rota)
                                     FontWeight.Bold else FontWeight.Normal)
                         },
-                        colors = NavigationBarItemDefaults.colors(
+                        colors = NavigationRailItemDefaults.colors(
                             selectedIconColor = Destaque,
                             selectedTextColor = Destaque,
                             indicatorColor = Destaque.copy(alpha = .14f),
@@ -142,9 +154,8 @@ fun App(vm: JogoViewModel = viewModel()) {
                     )
                 }
             }
-        },
-    ) { padding ->
-        Box(Modifier.padding(padding)) {
+
+            Box(Modifier.weight(1f).fillMaxHeight()) {
             when (rota) {
                 "painel" -> TelaPainel(estado, vm) { rota = it }
                 "escalacao" -> TelaEscalacao(vm.slots, estado.elenco)
@@ -177,6 +188,8 @@ fun App(vm: JogoViewModel = viewModel()) {
                 }
                 "artilharia" -> TelaArtilharia(estado)
                 "analise" -> TelaAnalise(estado, vm)
+                "torneios" -> TelaTorneios(estado, vm)
+                "vestiario" -> TelaVestiario(estado, vm)
                 "olheiro" -> {
                     LaunchedEffect(Unit) { vm.buscarParaOlheiro() }
                     TelaOlheiro(
@@ -189,6 +202,8 @@ fun App(vm: JogoViewModel = viewModel()) {
                     )
                 }
                 "partida" -> TelaPartida(estado)
+                "pvp" -> TelaPvp(estado, vm) { rota = it }
+            }
             }
         }
     }
@@ -204,6 +219,9 @@ private fun tituloDe(rota: String) = when (rota) {
     "online" -> "Partida local"
     "olheiro" -> "Olheiros"
     "analise" -> "Análise"
+    "torneios" -> "Torneios"
+    "vestiario" -> "Vestiário"
+    "pvp" -> "Modo online"
     "partida" -> "Resumo da partida"
     else -> ""
 }

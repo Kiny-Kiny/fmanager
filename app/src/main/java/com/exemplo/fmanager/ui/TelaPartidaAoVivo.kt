@@ -1,7 +1,5 @@
 package com.exemplo.fmanager.ui
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,7 +21,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,22 +74,14 @@ fun TelaPartidaAoVivo(
     taticaInicial: Tatica,
     onTerminar: () -> Unit,
 ) {
-    // ------------------------------------------------ ORIENTAÇÃO
-    val contexto = LocalContext.current
-    DisposableEffect(Unit) {
-        val atividade = contexto as? Activity
-        val anterior = atividade?.requestedOrientation
-        atividade?.requestedOrientation =
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        onDispose {
-            atividade?.requestedOrientation =
-                anterior ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
+    // O app inteiro já roda deitado — declarado no manifesto. Antes só
+    // esta tela forçava a orientação, o que causava um giro visível ao
+    // entrar e sair da partida.
 
     var ritmo by remember { mutableStateOf(Ritmo.NORMAL) }
     var pausado by remember { mutableStateOf(false) }
     var painel by remember { mutableStateOf<String?>(null) }
+    var verNotas by remember { mutableStateOf(false) }
     var tatica by remember { mutableStateOf(taticaInicial) }
     val narracao = remember { mutableStateListOf<Lance>() }
 
@@ -104,6 +93,7 @@ fun TelaPartidaAoVivo(
         )
     }
     var quadro by remember { mutableStateOf<Quadro?>(null) }
+    val rastrosPecas = remember { HashMap<Int, List<Ponto>>() }
     val tick = remember { mutableIntStateOf(0) }
 
     // Relógio de jogo em segundos, com fração.
@@ -143,9 +133,10 @@ fun TelaPartidaAoVivo(
 
                 fisica.avancar(
                     dt = dtJogo,
+                    dtReal = dt,
+                    multiplicadorRitmo = ritmo.segundosDeJogoPorSegundo,
                     mandanteComBola = partida.mandanteComBola,
                     portadorId = partida.portadorId,
-                    alvoDaBola = partida.alvoDaBola,
                     alturaLinhaCasa = partida.alturaLinhaCasa,
                     alturaLinhaFora = partida.alturaLinhaFora,
                     compactacaoCasa = partida.compactacaoCasa,
@@ -153,6 +144,9 @@ fun TelaPartidaAoVivo(
                 )
 
                 quadro = fisica.quadro(partida.mandanteComBola, partida.portadorId)
+                quadro?.pecas?.forEach { pe ->
+                    rastrosPecas[pe.jogadorId] = fisica.rastroDe(pe.jogadorId)
+                }
                 tick.intValue++
 
                 if (partida.acabou) acabou = true
@@ -167,6 +161,7 @@ fun TelaPartidaAoVivo(
         Box(Modifier.weight(1f).fillMaxHeight().padding(6.dp)) {
             CampoDeitado(
                 quadro = quadro,
+                rastros = rastrosPecas,
                 tick = tick,
                 souMandante = souMandante,
                 modifier = Modifier.fillMaxSize(),
@@ -256,21 +251,42 @@ fun TelaPartidaAoVivo(
             }
 
             Spacer(Modifier.height(8.dp))
+
+            // Alternar narração / notas ao vivo. As notas são o que faz
+            // decidir a substituição durante o jogo em vez de descobrir
+            // no resumo, quando já não dá para fazer nada.
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(!verNotas, { verNotas = false },
+                    { Text("Lances", fontSize = 10.sp) })
+                FilterChip(verNotas, { verNotas = true },
+                    { Text("Notas", fontSize = 10.sp) })
+            }
+            Spacer(Modifier.height(4.dp))
+
             LazyColumn(
                 Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                items(narracao.filter { it.importancia != Importancia.ROTINA }) { l ->
-                    Row {
-                        Text("${l.minuto}'", Modifier.width(26.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextoFraco, fontSize = 9.sp)
-                        Text(l.narrar(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = when (l.importancia) {
-                                Importancia.DECISIVO -> Destaque
-                                else -> TextoMedio
-                            }, fontSize = 9.sp)
+                if (verNotas) {
+                    items(
+                        partida.estatisticasPorJogador(apenasMandante = souMandante),
+                        key = { it.jogadorId },
+                    ) { st -> LinhaNotaAoVivo(st) }
+                } else {
+                    items(narracao.filter {
+                        it.importancia != Importancia.ROTINA
+                    }) { l ->
+                        Row {
+                            Text("${l.minuto}'", Modifier.width(26.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextoFraco, fontSize = 9.sp)
+                            Text(l.narrar(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = when (l.importancia) {
+                                    Importancia.DECISIVO -> Destaque
+                                    else -> TextoMedio
+                                }, fontSize = 9.sp)
+                        }
                     }
                 }
             }
@@ -294,6 +310,7 @@ fun TelaPartidaAoVivo(
 @Composable
 private fun CampoDeitado(
     quadro: Quadro?,
+    rastros: Map<Int, List<Ponto>>,
     tick: MutableIntState,
     souMandante: Boolean,
     modifier: Modifier = Modifier,
@@ -340,11 +357,19 @@ private fun CampoDeitado(
             val cor = if (minha) Destaque else Erro
             val impedido = p.jogadorId in q.impedidos
 
-            // Rastro de esforço: quanto mais corre, mais visível o traço.
-            if (p.esforco > 0.35f) {
+            // Rastro de quem está correndo: dá a direção do movimento.
+            if (p.esforco > 0.30f) {
+                rastros[p.jogadorId]?.forEachIndexed { i, r ->
+                    val forca = (i + 1f) / 6f
+                    drawCircle(
+                        cor.copy(alpha = .045f * forca * p.esforco * 2f),
+                        raio * (0.45f + forca * 0.5f),
+                        Offset(px(r.y), py(r.x)),
+                    )
+                }
                 drawCircle(
-                    cor.copy(alpha = .16f * p.esforco),
-                    raio * (1.4f + p.esforco * 0.7f),
+                    cor.copy(alpha = .13f * p.esforco),
+                    raio * (1.35f + p.esforco * 0.6f),
                     Offset(cx, cy),
                 )
             }
@@ -369,11 +394,36 @@ private fun CampoDeitado(
         }
 
         // -------------------------------------------------- BOLA
+        /*
+         * Rastro, sombra e altura. São essas três coisas que fazem o olho
+         * ler MOVIMENTO em vez de posição: o rastro mostra de onde veio, a
+         * sombra separada mostra que está no ar, e o tamanho variando dá a
+         * parábola do lançamento.
+         */
+        q.rastroBola.forEachIndexed { i, p ->
+            val forca = (i + 1f) / q.rastroBola.size
+            drawCircle(
+                Color(0xFFFDFBF5).copy(alpha = 0.05f + forca * 0.22f),
+                (1.2f + forca * 2.2f).dp.toPx(),
+                Offset(px(p.y), py(p.x)),
+            )
+        }
+
         val bx = px(q.bola.y)
         val by = py(q.bola.x)
-        drawCircle(Color.Black.copy(alpha = .30f), 4.dp.toPx(),
-            Offset(bx + 1.5f, by + 2f))
-        drawCircle(Color(0xFFFDFBF5), 4.dp.toPx(), Offset(bx, by))
+        val h = q.alturaBola
+
+        // Sombra fica no chão e se afasta quando a bola sobe.
+        drawCircle(
+            Color.Black.copy(alpha = .34f - h * 0.14f),
+            (3.4f + h * 0.8f).dp.toPx(),
+            Offset(bx + 1.5f + h * 5f, by + 2f + h * 7f),
+        )
+        drawCircle(
+            Color(0xFFFDFBF5),
+            (3.8f + h * 2.2f).dp.toPx(),
+            Offset(bx, by),
+        )
     }
 }
 
@@ -531,5 +581,60 @@ private fun PainelSubstituicoes(partida: PartidaAoVivo, onFechar: () -> Unit) {
             )
         }
         item { Spacer(Modifier.height(20.dp)) }
+    }
+}
+
+
+/**
+ * Linha de nota ao vivo. Compacta de propósito: na lateral de uma tela
+ * deitada cabe pouco, e o que importa é nome, nota e o número que explica
+ * a nota — passe certo, drible, desarme.
+ */
+@Composable
+private fun LinhaNotaAoVivo(st: EstatisticaAoVivo) {
+    val cor = when (st.faixaDaNota) {
+        2 -> Destaque
+        1 -> Alerta
+        else -> Erro
+    }
+    Row(
+        Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(st.sigla, Modifier.width(28.dp), style = EstiloRotulo,
+            color = TextoFraco, fontSize = 8.sp)
+        Column(Modifier.weight(1f)) {
+            Text(st.nome.split(" ").last(), maxLines = 1,
+                style = MaterialTheme.typography.labelSmall,
+                color = Texto, fontSize = 10.sp)
+            Text(
+                buildString {
+                    if (st.gols > 0) append("⚽${st.gols} ")
+                    if (st.assistencias > 0) append("→${st.assistencias} ")
+                    if (st.passes >= 5) append("pas ${st.precisaoPasse}% ")
+                    if (st.driblesTentados > 0) append("dri ${st.sucessoDrible}% ")
+                    if (st.desarmes > 0) append("des ${st.desarmes} ")
+                    if (st.amarelo) append("🟨")
+                    if (st.vermelho) append("🟥")
+                },
+                maxLines = 1,
+                style = MaterialTheme.typography.labelSmall,
+                color = TextoFraco, fontSize = 8.sp,
+            )
+        }
+        // Gás em barra fina: o motivo mais comum de tirar alguém.
+        Box(
+            Modifier.width(3.dp).height(18.dp)
+                .background(TextoFraco.copy(alpha = .2f)),
+        ) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .fillMaxHeight(st.gas / 100f)
+                    .align(Alignment.BottomCenter)
+                    .background(corPorValor(st.gas))
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Text("%.1f".format(st.nota), Modifier.width(26.dp),
+            style = MaterialTheme.typography.labelMedium, color = cor, fontSize = 11.sp)
     }
 }

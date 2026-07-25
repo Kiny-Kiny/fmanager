@@ -103,6 +103,388 @@ sobre-humano acumulando traços.
 
 
 
+
+
+
+
+## Tela deitada em todo o app
+
+Antes só a tela de partida forçava paisagem, o que causava um giro visível
+ao entrar e sair dela. Agora o manifesto declara `sensorLandscape` para a
+Activity inteira e a tela de partida não mexe mais em orientação.
+
+**A navegação virou trilho lateral.** Em tela deitada a ALTURA é o recurso
+escasso — gastar 80dp dela com uma barra embaixo é desperdício. O trilho na
+lateral também é a orientação natural do gesto quando o aparelho está de
+lado.
+
+E telas que antes eram rolagem infinita ganharam **duas colunas**: o modo
+online mostra seu time à esquerda e desafios à direita, lado a lado.
+
+## PVP online — "Ultimate Team de técnico"
+
+### A decisão de arquitetura
+
+O pedido foi: multijogador fora da rede local, sem construir um servidor,
+mas hospedável pelo dono do app.
+
+O `lollito/fm` que você mandou resolve isso com Spring Boot + MySQL +
+MongoDB + Redis + Nginx + Prometheus via docker-compose. Isso é escrever
+**e manter** um servidor: atualizações de segurança, migrações, backup,
+monitoramento.
+
+Escolhi **PocketBase**: um binário único de ~15 MB com SQLite embutido,
+REST automático, autenticação e painel de administração. O dono roda
+`./pocketbase serve`, cria duas coleções pelo painel, e não escreve uma
+linha de código de servidor. O backup é copiar uma pasta.
+
+**O endereço não é fixo no código.** Cada pessoa aponta para a instância que
+quiser. Não existe servidor oficial nem ponto único de falha.
+
+Instruções completas em `HOSPEDAR-PVP.md`.
+
+### Três decisões de desenho
+
+**1. Orçamento igual para todos.** Ninguém joga com o Real Madrid porque
+escolheu o Real Madrid. Cada técnico recebe 700 moedas e monta os 11 do
+acervo mundial de 16 mil jogadores.
+
+O preço é **exponencial** (`(overall/60)^6.2`), não linear. Com curva linear
+o melhor elenco seria sempre "onze jogadores de 84" e não haveria decisão.
+Exponencial força a escolha real do Ultimate Team: dois craques e nove
+medianos, ou onze bons e nenhum craque?
+
+O montador automático otimiza **rendimento por moeda**, não rendimento —
+que é exatamente a conta que o formato obriga a fazer.
+
+**2. Assíncrono.** Os dois jamais precisam estar online juntos. Você publica
+um desafio, alguém aceita quando quiser, cada lado simula quando abrir o
+app. É o que faz um jogo de celular funcionar de verdade.
+
+**3. Simulação dupla com conferência.** O servidor **não simula nada** — ele
+é um banco com API. Os dois clientes rodam a mesma partida com a mesma
+semente (gravada no desafio) e enviam uma assinatura do resultado.
+Assinaturas iguais → confirmado e o Elo se move. Diferentes →
+`EM_DISPUTA` e ninguém pontua.
+
+Isso é o que permite não escrever servidor: **o árbitro é o determinismo do
+motor**, que eu já tinha construído para o modo LAN.
+
+### O que isso garante e o que não garante
+
+**Garante:** um cliente modificado consegue no máximo *anular* a partida.
+Nunca fabricar uma vitória, porque vitória só conta com a concordância do
+adversário.
+
+**Não garante:** duas pessoas combinadas rodando clientes modificados
+idênticos podem inflar rating entre si. Impedir isso exigiria o servidor
+simular a partida — e aí você estaria mantendo um servidor de jogo, que é
+exatamente o que este desenho evita.
+
+Preferi ser explícito sobre o limite a fingir que criptografia resolve tudo.
+
+### Ladder
+
+Elo com K=28, começando em 1400. Divisões de 4 a Elite. O emparelhamento
+ordena os desafios abertos por **proximidade de rating** — enfrentar alguém
+600 pontos acima não é competição.
+
+## Gestão humana
+
+Comparando a lista de features do **OpenFootManager** com a minha, apareceu
+uma lacuna inteira: tudo que eu havia construído era tático ou estatístico
+— formação, xG, garimpo, olheiro. Nada sobre lidar com gente, que é metade
+do trabalho de um treinador.
+
+Duas telas do OpenFootManager que eu não tinha nada parecido: **playertalk**
+e **presstalk**.
+
+### O erro que isso expôs
+
+O campo `moral` existe em `Contrato` desde o começo do projeto e **nunca foi
+lido por nada**. Criei e esqueci. Um número guardado que não afeta nada é
+pior que não ter o campo: dá a impressão de sistema onde não há.
+
+Agora a moral faz três coisas concretas:
+
+1. **multiplica o rendimento em campo** (0,92 a 1,06)
+2. **decide se o jogador aceita renovar** — revoltado não renova por dinheiro
+3. **gera insatisfação** que aparece no painel e na caixa de entrada
+
+A faixa do multiplicador é estreita de propósito. Moral importa, mas um
+craque revoltado ainda é melhor que um reserva animado — sistemas que deixam
+a moral dominar premiam micro-gestão em vez de decisão tática.
+
+### Como a moral se move
+
+O peso maior é **minutos jogados**. Jogador que não joga fica insatisfeito
+independente de quanto o time ganha — é a reclamação número um do futebol
+real. Craque no banco perde 2,5 a mais que um reserva comum, e veterano sem
+jogar aceita menos que um jovem.
+
+E tudo tende devagar para o meio: ninguém fica eufórico para sempre.
+
+### Clima do vestiário: média ponderada
+
+A média é ponderada pelo overall **ao cubo**. O titular insatisfeito
+contamina muito mais que o décimo reserva, e é isso que faz a gestão do
+craque importar de verdade.
+
+### Conversa com jogador
+
+O princípio: **nenhuma opção é sempre certa.**
+
+- Elogiar quem vai bem: +8. Elogiar quem vai mal: **−4** — soa falso, e ele
+  sabe que não está jogando bem
+- Cobrar um jovem: +4. Cobrar o melhor do elenco: **−9** — ele se considera
+  acima disso
+- Pedir paciência a um jovem: +4. A um trintão: **−6** — na idade dele não
+  sobra tempo
+- **Prometer titularidade: +14** — e a promessa fica registrada
+
+Os assuntos disponíveis dependem do contexto. Oferecer "explicar a falta de
+minutos" a um titular absoluto seria ruído, e o jogo ficaria com cara de
+menu em vez de conversa.
+
+### Coletiva de imprensa
+
+As perguntas nascem do que acabou de acontecer: sequência ruim, posição
+abaixo da meta, eliminação na copa, rumores de vestiário. Coletiva com
+perguntas genéricas seria decoração.
+
+Cada tom mexe em **três medidores ao mesmo tempo**, e nenhum agrada os três:
+
+| Tom | Vestiário | Diretoria | Torcida |
+|---|---|---|---|
+| Confiante (time bem) | +5 | +3 | +6 |
+| Confiante (time mal) | +4 | **−6** | −2 |
+| Cauteloso | +1 | +2 | 0 |
+| Defensivo (time mal) | **−5** | +3 | −3 |
+| Provocador (time bem) | +8 | −4 | **+12** |
+| Provocador (time mal) | −6 | **−9** | −8 |
+
+Provocar ganhando eletriza a torcida e vira manchete — mas agora você tem
+que sustentar em campo. Provocar perdendo é o pior resultado possível.
+
+## Comissão técnica
+
+Outra lacuna: o treino funcionava sozinho, como se o clube não tivesse
+ninguém aplicando. Um clube pequeno e um gigante evoluíam jogadores na mesma
+velocidade, o que apagava boa parte da diferença entre eles.
+
+Seis cargos — auxiliar, preparador físico, treinador de goleiros, analista,
+olheiro-chefe, fisioterapeuta. Sem auxiliar o elenco treina a **82%** do que
+treinaria com uma comissão boa, e ao longo de uma temporada isso é muito.
+
+**A qualidade dos candidatos depende da reputação do clube.** Clube pequeno
+não atrai referência mundial — é isso que faz subir de clube significar algo
+além de orçamento maior. E o salário sobe muito mais rápido que a
+competência, então um preparador físico bom compete por orçamento com o
+quarto zagueiro.
+
+## Renovação de contrato
+
+Faltava por completo: eu tinha `terminaEmTemporada` e nenhuma forma de
+renovar. Agora a moral decide:
+
+- moral ≥ 70 → aceita manter o salário
+- moral ≥ 50 → quer +15%
+- moral ≥ 30 → quer +40%
+- abaixo de 30 → **não renova por dinheiro nenhum**
+
+## Nota técnica: enum no Room
+
+`Cargo` é um enum, e **Room não persiste enum sem conversor**. Isso quebraria
+a compilação, não em tempo de execução.
+
+O conversor guarda pelo **nome**, não pelo ordinal. Se eu reordenar o enum
+um dia, os dados salvos continuam válidos — ordinal quebraria em silêncio,
+que é o pior tipo de bug.
+
+## Torneios customizados
+
+Trazido do padrão das ferramentas de torneio de eFootball. O formato que
+faltava é o mais reconhecível de todos: **fase de grupos seguida de
+eliminatória**. É o desenho da Champions, da Copa do Mundo e de
+praticamente todo torneio que alguém organiza entre amigos.
+
+Eu tinha liga de pontos corridos e copa de eliminatória pura, mas não a
+combinação.
+
+### Sorteio com potes
+
+O que dá sabor ao torneio, e o que um sorteio puramente aleatório erra: os
+clubes são ordenados por reputação, cortados em tantos potes quantos
+grupos existem, e distribuídos um de cada pote por grupo.
+
+Sem isso sai um grupo com quatro gigantes e outro com quatro fracos. Com
+isso a força fica equilibrada entre grupos, mas **o adversário exato ainda
+é surpresa** — cada pote é embaralhado por dentro.
+
+### Chaveamento cruzado
+
+Os classificados não entram na eliminatória em ordem. Primeiro de grupo
+encara segundo de **outro** grupo, e os líderes ficam nas pontas opostas
+do chaveamento — só se encontram na final. É o que evita que os dois
+melhores caiam nas quartas.
+
+### Montar a competição
+
+Você escolhe os clubes de **qualquer liga**, filtrando por competição.
+Quer uma Libertadores com times europeus? Um torneio só de rivais? Uma
+Champions de 32 com oito grupos? Tudo cabe.
+
+O app avisa quando a divisão não fecha exata (`23 clubes em 4 grupos = 5
+por grupo, 3 de fora`) em vez de montar um grupo desigual em silêncio.
+
+### Faixas de rodada
+
+As rodadas usam faixas próprias para não colidir na tabela de partidas:
+1000+ copa nacional, 2000+ fase de grupos, 3000+ eliminatória de torneio.
+E cada torneio tem um `ligaIdVirtual` de 9100+.
+
+## Palmarés
+
+Torneio ganho fica registrado. Sem isso vencer não significa nada na
+temporada seguinte — e a sala de trofeus é metade do sentido de um modo
+carreira.
+
+Guarda o mínimo: o que, quando e o tipo. Migração aditiva 4 → 5.
+
+### Nota sobre a fonte
+
+O repositório `islam80012/Efootball-Tournament-Api` é um Spring Boot REST
+API com backend e UI, **sem README** — a descrição de uma linha é toda a
+documentação existente:
+
+> *automated match scheduling, team registrations, and real-time player
+> statistics*
+
+Agendamento automático de partidas eu já tinha. Os outros dois eram
+lacunas reais, e estão nas seções abaixo.
+
+## Inscrição de elenco por torneio
+
+Vinha de *"team registrations"*. Antes o clube entrava no torneio com o
+elenco inteiro. Na prática existe uma **lista fechada**: você inscreve 23
+jogadores para aquela competição, e quem ficou de fora não joga — nem por
+lesão de outro.
+
+Isso muda decisões de verdade. Contratar no meio do torneio não resolve
+nada se a lista já está cheia, e deixar o garoto fora para inscrever o
+veterano passa a ser uma escolha com consequência.
+
+A inscrição vale **só para o clube do usuário**. Obrigar a IA a fechar
+lista criaria times incompletos sem nenhum ganho de jogabilidade.
+
+Mínimo de 14 para a lista ser válida, e `montarTime()` filtra o elenco por
+ela quando a partida é daquele torneio.
+
+## Estatística de jogador em tempo real
+
+Vinha de *"real-time player statistics"*, e era a lacuna mais incômoda:
+durante a partida eu só mostrava números do **time** — posse, chutes,
+faltas. Nada por jogador.
+
+Então não havia como perceber, no minuto 60, que o seu camisa 10 tinha
+errado catorze passes e a nota dele estava em 5,2. Você descobria no
+resumo, quando já não dava para fazer nada.
+
+Agora cada jogador acumula os próprios números lance a lance: passes e
+precisão, finalizações, dribles tentados e certos, desarmes, faltas
+cometidas e sofridas, bolas perdidas, cartões.
+
+### A nota ao vivo
+
+Parte de 6,0 e move conforme o que ele fez, com os pesos de uma nota de
+imprensa — gol vale 1,35, assistência 0,85, bola perdida custa 0,045 cada.
+
+Um detalhe que evita ruído: a **precisão de passe só entra depois de 8
+passes**. Antes disso a amostra é pequena demais e a nota ficaria pulando
+a cada toque.
+
+Na lateral da tela de partida há um seletor **Lances / Notas**. A aba de
+notas lista o elenco ordenado por nota, com barra de gás ao lado — porque
+gás é o motivo mais comum de tirar alguém, e assim os dois números que
+importam para a decisão ficam na mesma linha.
+
+## Bola: modelo de voo
+
+A primeira versão da física ainda deixava a bola saltando, e havia **dois
+bugs** por trás disso.
+
+**Bug 1 — velocidade em tempo de jogo.** A bola andava por `velocidade ×
+dt de jogo`. Medindo:
+
+| ritmo | tempo real para cruzar 30% do campo |
+|---|---|
+| 1x | 226 ms |
+| 4x | 56 ms |
+| 8x | **28 ms** |
+| 20x | **11 ms** |
+
+Abaixo de ~8 frames o olho não lê como movimento, lê como teletransporte.
+A 8x eram 1,7 frames.
+
+**Bug 2, o pior — o alvo era o slot.** `alvoDaBola` devolvia a posição do
+*slot* do portador, mas a peça desenhada usava a posição *física*. A bola
+perseguia um ponto onde ninguém estava, enquanto o jogador caminhava para
+lá separadamente.
+
+### O conserto
+
+A bola agora tem um **voo**: origem, destino e duração com **piso em tempo
+real**. E é ancorada na posição física do portador, não no slot.
+
+A duração encurta com o ritmo pela **raiz**, não linearmente:
+
+| ritmo | voo de um passe médio |
+|---|---|
+| 1x | 520 ms (31 frames) |
+| 4x | 260 ms (16 frames) |
+| 8x | 184 ms (11 frames) |
+| 20x | 170 ms (10 frames) |
+
+Todos acima de 10 frames. A raiz importa: linear voltaria a teletransportar
+nos ritmos altos, e um piso fixo faria a bola parecer descolada dos
+jogadores, que aceleram linearmente.
+
+### Três coisas que fazem o olho ler movimento
+
+**Rastro.** Doze posições recentes da bola desenhadas com transparência
+decrescente. Mostra de onde ela veio.
+
+**Sombra separada.** A sombra fica no chão e se afasta quando a bola sobe.
+É o que comunica altura numa vista de cima.
+
+**Parábola.** O tamanho da bola varia ao longo do voo, e a altura vem de
+`4t(1−t)` — sobe e desce. Lançamento longo sobe; toque curto vai rasteiro.
+
+Jogadores correndo também deixam rastro, o que dá a direção do movimento.
+
+### Condução da bola
+
+Sem voo em curso, a bola fica no pé do portador com uma **oscilação de
+condução** — pequena, mas é o que diferencia "jogador com a bola" de
+"jogador com um círculo grudado".
+
+## Plano de jogo no vocabulário do EA FC
+
+Os sete controles contínuos dão precisão, mas ninguém pensa em "risco no
+passe 62". Adicionei a camada nomeada do EA FC:
+
+**Construção** — Equilibrada · Toque curto · Bola longa · Saída rápida
+**Criação de chances** — Equilibrada · Infiltrações · Passe direto · Posse
+**Postura defensiva** — Equilibrada · Pressão após perder · Pressão
+constante · Recuar
+
+Cada escolha mexe em **vários números de uma vez** e liga instruções de
+equipe correspondentes — escolher "bola longa" ativa ligação direta e bola
+no homem-alvo, não só sobe um slider.
+
+É uma **camada** sobre o que existia: escolher um plano preenche os
+sliders, e você continua livre para afinar cada um depois.
+
 ## Partida: física contínua e tela deitada
 
 A versão anterior parecia travada por um motivo estrutural: cada jogador

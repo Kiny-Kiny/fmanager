@@ -231,3 +231,119 @@ fun descricaoDoTeto(temporada: Int): String = when (temporada) {
     4 -> "Quarta temporada: clubes até reputação 84"
     else -> "Sem restrição — todos os clubes ao alcance"
 }
+
+
+/*
+ * PLANO TÁTICO NO VOCABULÁRIO DO EA FC.
+ *
+ * Os sete controles contínuos dão precisão, mas ninguém pensa em "risco
+ * no passe 62". O EA FC resolve isso com três escolhas nomeadas —
+ * construção, criação de chances e postura defensiva — que por baixo
+ * mexem em vários números de uma vez.
+ *
+ * É uma CAMADA sobre o que já existe, não uma substituição: escolher um
+ * plano preenche os sliders, e você continua livre para afinar depois.
+ */
+
+enum class Construcao(val rotulo: String, val descricao: String) {
+    EQUILIBRADA("Equilibrada", "Sai jogando sem pressa nem afobação."),
+    TOQUE_CURTO("Toque curto", "Constrói de trás com paciência e posse."),
+    BOLA_LONGA("Bola longa", "Pula o meio-campo e busca o atacante direto."),
+    SAIDA_RAPIDA("Saída rápida", "Verticaliza no primeiro passe após recuperar.");
+}
+
+enum class CriacaoDeChances(val rotulo: String, val descricao: String) {
+    EQUILIBRADA("Equilibrada", "Mistura os caminhos para o gol."),
+    INFILTRACOES("Infiltrações", "Muitos movimentos nas costas da defesa."),
+    PASSE_DIRETO("Passe direto", "Procura o passe que quebra linha, com risco."),
+    POSSE("Posse de bola", "Circula até a defesa se desorganizar.");
+}
+
+enum class PosturaDefensiva(val rotulo: String, val descricao: String) {
+    EQUILIBRADA("Equilibrada", "Bloco médio, pressão moderada."),
+    PRESSAO_APOS_PERDER("Pressão após perder", "Cinco segundos de caça à bola."),
+    PRESSAO_CONSTANTE("Pressão constante", "Sufoca o jogo inteiro. Cansa muito."),
+    RECUAR("Recuar", "Cede o campo e fecha os espaços atrás.");
+}
+
+data class PlanoTatico(
+    val construcao: Construcao = Construcao.EQUILIBRADA,
+    val criacao: CriacaoDeChances = CriacaoDeChances.EQUILIBRADA,
+    val postura: PosturaDefensiva = PosturaDefensiva.EQUILIBRADA,
+    /** 0 estreito · 100 aberto. */
+    val largura: Int = 50,
+    /** 0 linha recuada · 100 linha adiantada. */
+    val profundidade: Int = 50,
+) {
+    /**
+     * Traduz o plano para os controles contínuos que o motor consome.
+     *
+     * Cada escolha mexe em várias coisas ao mesmo tempo, e é essa
+     * combinação que dá personalidade — igual ao EA FC, onde escolher
+     * "bola longa" muda o jogo inteiro, não um número.
+     */
+    fun paraTatica(mentalidade: Int = 50): Tatica {
+        var t = Tatica(mentalidade = mentalidade)
+
+        t = when (construcao) {
+            Construcao.EQUILIBRADA -> t
+            Construcao.TOQUE_CURTO -> t.copy(
+                velocidadeConstrucao = 22, riscoNoPasse = 32,
+                instrucoes = t.instrucoes + InstrucaoEquipe.SAIR_JOGANDO_CURTO,
+            )
+            Construcao.BOLA_LONGA -> t.copy(
+                velocidadeConstrucao = 88, riscoNoPasse = 62,
+                instrucoes = t.instrucoes +
+                        InstrucaoEquipe.TIRO_LONGO_DO_GOLEIRO +
+                        InstrucaoEquipe.BOLA_NO_HOMEM_ALVO,
+            )
+            Construcao.SAIDA_RAPIDA -> t.copy(
+                velocidadeConstrucao = 78, contraAtaque = 72,
+            )
+        }
+
+        t = when (criacao) {
+            CriacaoDeChances.EQUILIBRADA -> t
+            CriacaoDeChances.INFILTRACOES -> t.copy(
+                liberdadeCriativa = 68, riscoNoPasse = 66,
+            )
+            CriacaoDeChances.PASSE_DIRETO -> t.copy(
+                riscoNoPasse = 82, velocidadeConstrucao =
+                    (t.velocidadeConstrucao + 12).coerceAtMost(100),
+            )
+            CriacaoDeChances.POSSE -> t.copy(
+                velocidadeConstrucao = 20, riscoNoPasse = 28,
+                compactacao = 62,
+            )
+        }
+
+        t = when (postura) {
+            PosturaDefensiva.EQUILIBRADA -> t
+            PosturaDefensiva.PRESSAO_APOS_PERDER -> t.copy(
+                intensidadePressao = 68,
+                instrucoes = t.instrucoes + InstrucaoEquipe.PRESSAO_APOS_PERDA,
+            )
+            PosturaDefensiva.PRESSAO_CONSTANTE -> t.copy(
+                intensidadePressao = 92, alturaLinha = 82,
+                instrucoes = t.instrucoes +
+                        InstrucaoEquipe.PRESSAO_APOS_PERDA +
+                        InstrucaoEquipe.LINHA_DE_IMPEDIMENTO,
+            )
+            PosturaDefensiva.RECUAR -> t.copy(
+                intensidadePressao = 22, alturaLinha = 18,
+                compactacao = 84, contraAtaque = 68,
+            )
+        }
+
+        // Largura e profundidade entram por último: são ajustes finos que
+        // o jogador mexe direto, então não devem ser sobrescritos.
+        return t.copy(
+            compactacao = (100 - largura).coerceIn(0, 100),
+            alturaLinha = if (postura == PosturaDefensiva.EQUILIBRADA)
+                profundidade else t.alturaLinha,
+        )
+    }
+
+    val resumo: String get() =
+        "${construcao.rotulo} · ${criacao.rotulo} · ${postura.rotulo}"
+}

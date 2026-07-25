@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.exemplo.fmanager.EstadoJogo
 import com.exemplo.fmanager.JogoViewModel
 import com.exemplo.fmanager.dados.*
@@ -151,6 +152,7 @@ private fun LinhaJogador(j: Jogador, papel: Papel?, contrato: Contrato?) {
 @Composable
 fun TelaTaticas(e: EstadoJogo, vm: JogoViewModel) {
     var t by remember { mutableStateOf(e.tatica) }
+    var plano by remember { mutableStateOf(PlanoTatico()) }
     var abaEditor by remember { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize()) {
@@ -162,7 +164,7 @@ fun TelaTaticas(e: EstadoJogo, vm: JogoViewModel) {
                 Text("Formação", Modifier.padding(14.dp))
             }
             Tab(!abaEditor, { abaEditor = false }) {
-                Text("Estilo de jogo", Modifier.padding(14.dp))
+                Text("Plano de jogo", Modifier.padding(14.dp))
             }
         }
 
@@ -178,6 +180,33 @@ fun TelaTaticas(e: EstadoJogo, vm: JogoViewModel) {
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 item {
+                    // PLANO no vocabulário do EA FC: três escolhas
+                    // nomeadas que preenchem os sliders de baixo.
+                    Secao("Plano de jogo")
+
+                    EscolhaTatica("Construção",
+                        Construcao.entries, plano.construcao,
+                        { it.rotulo }, { it.descricao }) {
+                        plano = plano.copy(construcao = it)
+                        t = plano.paraTatica(t.mentalidade)
+                        vm.definirTatica(t)
+                    }
+                    EscolhaTatica("Criação de chances",
+                        CriacaoDeChances.entries, plano.criacao,
+                        { it.rotulo }, { it.descricao }) {
+                        plano = plano.copy(criacao = it)
+                        t = plano.paraTatica(t.mentalidade)
+                        vm.definirTatica(t)
+                    }
+                    EscolhaTatica("Postura defensiva",
+                        PosturaDefensiva.entries, plano.postura,
+                        { it.rotulo }, { it.descricao }) {
+                        plano = plano.copy(postura = it)
+                        t = plano.paraTatica(t.mentalidade)
+                        vm.definirTatica(t)
+                    }
+
+                    Secao("Presets rápidos")
                     Row(Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Estilos.todos.forEach { (nome, preset) ->
@@ -564,3 +593,33 @@ fun TelaPartida(e: EstadoJogo) {
 // ----------------------------------------------------------- AUXILIAR
 
 
+
+
+/**
+ * Escolha nomeada, no formato do EA FC: um rótulo, as opções em linha e a
+ * descrição do que a opção escolhida faz. Muito mais legível que um
+ * slider quando a decisão é categórica.
+ */
+@Composable
+private fun <T> EscolhaTatica(
+    titulo: String,
+    opcoes: List<T>,
+    atual: T,
+    rotulo: (T) -> String,
+    descricao: (T) -> String,
+    aoEscolher: (T) -> Unit,
+) {
+    Text(titulo.uppercase(), style = EstiloRotulo, color = TextoFraco,
+        modifier = Modifier.padding(top = 12.dp))
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        opcoes.forEach { o ->
+            FilterChip(o == atual, { aoEscolher(o) },
+                { Text(rotulo(o), fontSize = 11.sp) })
+        }
+    }
+    Text(descricao(atual), style = MaterialTheme.typography.labelSmall,
+        color = TextoMedio)
+}
