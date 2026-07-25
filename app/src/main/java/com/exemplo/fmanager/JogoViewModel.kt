@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.exemplo.fmanager.dados.*
 import com.exemplo.fmanager.formacao.*
 import com.exemplo.fmanager.motor.*
+import com.exemplo.fmanager.rede.*
 import com.exemplo.fmanager.sistemas.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +50,17 @@ data class EstadoJogo(
     val artilheirosDaLiga: List<Artilheiro> = emptyList(),
     val posicao: Int = 0,
     val totalRodadas: Int = 0,
+    // Olheiro e DNA (ideias do PyScoutFM)
+    val dnaDoClube: Dna = Dnas.intensidade,
+    val niveisObservacao: Map<Int, Int> = emptyMap(),
+    val candidatosOlheiro: List<Jogador> = emptyList(),
+    val custoOlheiroSemanal: Long = 0,
+    // Semelhança, moneyball e desenvolvimento
+    val desenvolvimento: List<Desenvolvimento> = emptyList(),
+    val resumoDesenvolvimento: String = "",
+    val garimpo: List<Moneyball.Achado> = emptyList(),
+    val parecidos: List<Semelhanca.Parecido> = emptyList(),
+    val referenciaSemelhanca: Jogador? = null,
 )
 
 class JogoViewModel(app: Application) : AndroidViewModel(app) {
@@ -211,6 +223,8 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             autoEscalar(elenco)
         }
 
+        tirarRetrato(carreira.temporada, elenco)
+
         _estado.value = EstadoJogo(
             carregando = false,
             mensagem = "",
@@ -249,6 +263,12 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             artilheirosDaLiga = db.estatisticas()
                 .artilheiros(carreira.temporada),
             posicao = tabelaLiga.indexOfFirst { it.clubeId == clube.id } + 1,
+            dnaDoClube = _estado.value.dnaDoClube.takeIf {
+                _estado.value.clube != null
+            } ?: Dnas.sugerirPara(elenco),
+            niveisObservacao = db.observacoes().ativas()
+                .associate { it.jogadorId to it.nivel },
+            custoOlheiroSemanal = Olheiro.custoDe(db.observacoes().ativas()),
             totalRodadas = partidas.maxOfOrNull { it.rodada } ?: 0,
             ultimoResultado = _estado.value.ultimoResultado,
             entrosamento = CalculadoraEntrosamento.calcular(
@@ -343,9 +363,12 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             val advId = if (partida.mandanteId == clube.id)
                 partida.visitanteId else partida.mandanteId
             val adv = db.clubes().porId(advId) ?: return@withContext null
+            clubesConhecidos[adv.id] = adv
             val elencoAdv = db.jogadores().elenco(advId)
-            val timeAdv = montarTime(adv.id, adv.nome, elencoAdv, Estilos.equilibrado)
-                ?: return@withContext null
+            val timeAdv = montarTime(
+                adv.id, adv.nome, elencoAdv,
+                TreinadorIA.taticaPara(adv, elencoAdv),
+            ) ?: return@withContext null
 
             if (partida.mandanteId == clube.id)
                 motor.simular(meuTime, timeAdv)
@@ -380,10 +403,14 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             outras.forEach { p ->
                 val casa = db.clubes().porId(p.mandanteId) ?: return@forEach
                 val fora = db.clubes().porId(p.visitanteId) ?: return@forEach
-                val tc = montarTime(casa.id, casa.nome,
-                    db.jogadores().elenco(casa.id), Estilos.equilibrado)
-                val tf = montarTime(fora.id, fora.nome,
-                    db.jogadores().elenco(fora.id), Estilos.equilibrado)
+                clubesConhecidos[casa.id] = casa
+                clubesConhecidos[fora.id] = fora
+                val ec = db.jogadores().elenco(casa.id)
+                val ef = db.jogadores().elenco(fora.id)
+                val tc = montarTime(casa.id, casa.nome, ec,
+                    TreinadorIA.taticaPara(casa, ec))
+                val tf = montarTime(fora.id, fora.nome, ef,
+                    TreinadorIA.taticaPara(fora, ef))
                 if (tc == null || tf == null) return@forEach
 
                 val r = motor.simular(tc, tf)
@@ -394,14 +421,30 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Monta os 11 em campo. Para a IA, usa uma 4-3-3 automática. */
+    /** Cache de escalação da IA: o mesmo clube joga igual na temporada. */
+    private val escalacoesIA = mutableMapOf<Int, List<Slot>>()
+
+    private fun slotsDaIA(clubeId: Int, elenco: List<Jogador>): List<Slot> =
+        escalacoesIA.getOrPut(clubeId) {
+            val clube = clubesConhecidos[clubeId]
+            if (clube == null) formacaoPadrao()
+            else TreinadorIA.escalar(clube, elenco)
+        }
+
+    /** Clubes já carregados, para a IA não precisar ir ao banco no meio
+     *  de um cálculo síncrono. */
+    private val clubesConhecidos = mutableMapOf<Int, Clube>()
+
+    /** Monta os 11 em campo, com a formação e o estilo de cada time. */
     private fun montarTime(
         clubeId: Int, nome: String, elenco: List<Jogador>, tatica: Tatica,
     ): TimeEmCampo? {
         if (elenco.size < 11) return null
 
-        val slotsDoTime = if (clubeId == _estado.value.clube?.id) slots
-        else formacaoPadrao()
+        // O meu time usa a minha formação. Cada adversário usa a
+        // formação e o estilo que o próprio elenco pede.
+        val meuClube = clubeId == _estado.value.clube?.id
+        val slotsDoTime = if (meuClube) slots else slotsDaIA(clubeId, elenco)
 
         val entrosamento = CalculadoraEntrosamento.calcular(
             slotsDoTime, elenco.associateBy { it.id },
@@ -449,8 +492,12 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         val advId = if (partida.mandanteId == clube.id)
             partida.visitanteId else partida.mandanteId
         val adv = db.clubes().porId(advId) ?: return null
-        val timeAdv = montarTime(adv.id, adv.nome,
-            db.jogadores().elenco(advId), Estilos.equilibrado) ?: return null
+        clubesConhecidos[adv.id] = adv
+        val elencoAdv = db.jogadores().elenco(advId)
+        val timeAdv = montarTime(
+            adv.id, adv.nome, elencoAdv,
+            TreinadorIA.taticaPara(adv, elencoAdv),
+        ) ?: return null
 
         souMandanteAoVivo = partida.mandanteId == clube.id
         taticaDaPartida = e.tatica
@@ -458,6 +505,8 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
 
         val aoVivo = if (souMandanteAoVivo) PartidaAoVivo(meuTime, timeAdv)
         else PartidaAoVivo(timeAdv, meuTime)
+        // A IA conduz o lado que não é o seu.
+        aoVivo.definirLadoDaIA(iaEhMandante = !souMandanteAoVivo)
 
         partidaAoVivo = aoVivo
         return aoVivo
@@ -506,10 +555,14 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
                 .forEach { p ->
                     val casa = db.clubes().porId(p.mandanteId) ?: return@forEach
                     val fora = db.clubes().porId(p.visitanteId) ?: return@forEach
-                    val tc = montarTime(casa.id, casa.nome,
-                        db.jogadores().elenco(casa.id), Estilos.equilibrado)
-                    val tf = montarTime(fora.id, fora.nome,
-                        db.jogadores().elenco(fora.id), Estilos.equilibrado)
+                    clubesConhecidos[casa.id] = casa
+                    clubesConhecidos[fora.id] = fora
+                    val ec = db.jogadores().elenco(casa.id)
+                    val ef = db.jogadores().elenco(fora.id)
+                    val tc = montarTime(casa.id, casa.nome, ec,
+                        TreinadorIA.taticaPara(casa, ec))
+                    val tf = montarTime(fora.id, fora.nome, ef,
+                        TreinadorIA.taticaPara(fora, ef))
                     if (tc == null || tf == null) return@forEach
                     val res = motor.simular(tc, tf)
                     db.partidas().atualizar(p.copy(
@@ -527,6 +580,253 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
         if (proxima.isNotEmpty()) db.partidas().inserirTodas(proxima)
     }
 
+    // ------------------------------ SEMELHANÇA E DESENVOLVIMENTO
+
+    /**
+     * Guarda um retrato do elenco. Chamado ao virar a temporada, e também
+     * na primeira carga — sem uma linha de base inicial nunca haveria o
+     * que comparar.
+     */
+    private suspend fun tirarRetrato(temporada: Int, elenco: List<Jogador>) {
+        if (elenco.isEmpty()) return
+        if (db.retratos().total(temporada) > 0) return
+        db.retratos().salvarTodos(elenco.map { RetratoJogador.de(it, temporada) })
+    }
+
+    /** Compara o elenco de hoje com o retrato de uma temporada anterior. */
+    fun analisarDesenvolvimento(temporadaBase: Int? = null) = viewModelScope.launch {
+        val carreira = db.carreira().atual() ?: return@launch
+        val atual = carreira.temporada
+        val base = temporadaBase ?: (atual - 1)
+        if (base < 1) {
+            _estado.value = _estado.value.copy(
+                desenvolvimento = emptyList(),
+                resumoDesenvolvimento =
+                    "Ainda na primeira temporada — sem passado para comparar.",
+            )
+            return@launch
+        }
+
+        val antes = db.retratos().daTemporada(base).associateBy { it.jogadorId }
+        val agora = db.retratos().daTemporada(atual).associateBy { it.jogadorId }
+
+        val lista = _estado.value.elenco.mapNotNull { j ->
+            AnaliseDesenvolvimento.comparar(j, antes[j.id], agora[j.id])
+        }.sortedByDescending { it.deltaGeral }
+
+        _estado.value = _estado.value.copy(
+            desenvolvimento = lista,
+            resumoDesenvolvimento = AnaliseDesenvolvimento.resumir(lista),
+        )
+    }
+
+    /** Garimpo estilo moneyball: mais qualidade por euro. */
+    fun garimpar(papel: Papel) = viewModelScope.launch {
+        val orcamento = _estado.value.caixa
+        val universo = withContext(Dispatchers.IO) {
+            db.jogadores().buscar(
+                posicao = null, idadeMax = 34, valorMax = orcamento,
+                geralMin = 58, limite = 300,
+            )
+        }
+        _estado.value = _estado.value.copy(
+            garimpo = withContext(Dispatchers.Default) {
+                Moneyball.garimpar(universo, papel, orcamento)
+            }
+        )
+    }
+
+    /** Quem joga como ele — para repor um titular que saiu. */
+    fun buscarParecidos(referencia: Jogador) = viewModelScope.launch {
+        val orcamento = _estado.value.caixa
+        val universo = withContext(Dispatchers.IO) {
+            db.jogadores().buscar(
+                posicao = null, idadeMax = 36, valorMax = orcamento,
+                geralMin = (referencia.geral - 14).coerceAtLeast(50),
+                limite = 400,
+            )
+        }
+        _estado.value = _estado.value.copy(
+            referenciaSemelhanca = referencia,
+            parecidos = withContext(Dispatchers.Default) {
+                Semelhanca.parecidosCom(referencia, universo)
+            },
+        )
+    }
+
+    // ------------------------------------------------- OLHEIRO
+
+    fun definirDna(d: Dna) {
+        _estado.value = _estado.value.copy(dnaDoClube = d)
+    }
+
+    /** Busca candidatos para o relatório de olheiro. */
+    fun buscarParaOlheiro(
+        geralMin: Int = 68,
+        idadeMax: Int = 32,
+    ) = viewModelScope.launch {
+        val caixa = _estado.value.caixa
+        _estado.value = _estado.value.copy(
+            candidatosOlheiro = db.jogadores().buscar(
+                posicao = null, idadeMax = idadeMax,
+                valorMax = caixa, geralMin = geralMin, limite = 60,
+            )
+        )
+    }
+
+    fun observar(jogador: Jogador) = viewModelScope.launch {
+        val atual = db.observacoes().de(jogador.id)
+            ?: Observacao(jogador.id, nivel = 0, semanas = 0)
+        db.observacoes().salvar(Olheiro.avancarUmaSemana(atual))
+        carregarTudo()
+    }
+
+    fun pararDeObservar(jogador: Jogador) = viewModelScope.launch {
+        db.observacoes().parar(jogador.id)
+        carregarTudo()
+    }
+
+    /**
+     * Uma semana passa: os olheiros avançam e a conta chega.
+     *
+     * Chamado junto com o treino, porque na prática é a mesma unidade de
+     * tempo — o que dá peso à escolha entre gastar em observação ou não.
+     */
+    private suspend fun avancarSemanaDeObservacao() {
+        val ativas = db.observacoes().ativas()
+        if (ativas.isEmpty()) return
+
+        db.observacoes().salvarTodas(ativas.map { Olheiro.avancarUmaSemana(it) })
+
+        val custo = Olheiro.custoDe(ativas)
+        val clube = _estado.value.clube ?: return
+        if (custo > 0) {
+            db.clubes().atualizar(
+                clube.copy(caixaEur = (clube.caixaEur - custo).coerceAtLeast(0))
+            )
+        }
+    }
+
+    // ---------------------------------------------- MULTIJOGADOR
+
+    var sala: Sala? = null
+        private set
+    var partidaEmRede: PartidaEmRede? = null
+        private set
+
+    private val _estadoRede = MutableStateFlow<EstadoRede>(EstadoRede.Desconectado)
+    val estadoRede: StateFlow<EstadoRede> = _estadoRede.asStateFlow()
+
+    private val _estadoPartidaRede =
+        MutableStateFlow<EstadoPartidaRede?>(null)
+    val estadoPartidaRede: StateFlow<EstadoPartidaRede?> =
+        _estadoPartidaRede.asStateFlow()
+
+    private val _salasEncontradas = MutableStateFlow<List<SalaEncontrada>>(emptyList())
+    val salasEncontradas: StateFlow<List<SalaEncontrada>> =
+        _salasEncontradas.asStateFlow()
+
+    private val _procurando = MutableStateFlow(false)
+    val procurando: StateFlow<Boolean> = _procurando.asStateFlow()
+
+    private fun abrirSala(anfitriao: Boolean): Sala {
+        fecharSala()
+        val nova = Sala(apelido = _estado.value.clube?.nome ?: "Treinador")
+        sala = nova
+        partidaEmRede = PartidaEmRede(nova, souAnfitriao = anfitriao)
+
+        viewModelScope.launch {
+            nova.estado.collect { e ->
+                _estadoRede.value = e
+                // Assim que conecta, a primeira coisa é comparar as bases.
+                if (e is EstadoRede.Conectado) {
+                    _estadoPartidaRede.value = EstadoPartidaRede.Preparando
+                    val imp = db.impressao().daBase()
+                    partidaEmRede?.enviarImpressao(
+                        db.jogadores().total(), Cripto.impressao(imp))
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            nova.mensagens.collect { m -> tratarMensagem(m) }
+        }
+
+        viewModelScope.launch {
+            partidaEmRede?.estado?.collect { _estadoPartidaRede.value = it }
+        }
+        return nova
+    }
+
+    private suspend fun tratarMensagem(m: Mensagem) {
+        val rede = partidaEmRede ?: return
+        when (m.tipo) {
+            Tipo.IMPRESSAO -> {
+                val minha = Cripto.impressao(db.impressao().daBase())
+                if (rede.conferirImpressao(m, db.jogadores().total(), minha)) {
+                    // Bases iguais: manda a escalação.
+                    val e = _estado.value
+                    rede.enviarEsquadrao(
+                        e.clube?.nome ?: "Meu clube", e.elenco, slots, e.tatica)
+                }
+            }
+            Tipo.ESQUADRAO -> rede.receberEsquadrao(m)
+            Tipo.COMANDO -> rede.receberComando(m)
+            Tipo.CHECKSUM -> rede.conferirChecksum(m)
+            Tipo.FIM -> { /* o resultado local já é o mesmo */ }
+            Tipo.ERRO -> rede.abortar(m.corpo.optString("motivo"))
+            Tipo.OLA, Tipo.PRONTO -> {}
+        }
+    }
+
+    fun hospedarSala(nome: String) {
+        abrirSala(anfitriao = true).hospedar(nome)
+    }
+
+    fun procurarSalas() = viewModelScope.launch {
+        _procurando.value = true
+        val s = abrirSala(anfitriao = false)
+        _salasEncontradas.value = s.procurar()
+        _procurando.value = false
+    }
+
+    fun entrarNaSala(encontrada: SalaEncontrada) {
+        sala?.entrar(encontrada)
+    }
+
+    /** Chamado quando os dois confirmam que o código de segurança bate. */
+    fun comecarPartidaEmRede(): PartidaAoVivo? {
+        val rede = partidaEmRede ?: return null
+        val e = _estado.value
+        val p = rede.iniciar(
+            meuClube = e.clube?.nome ?: "Meu clube",
+            meuElenco = e.elenco,
+            meusSlots = slots,
+            minhaTatica = e.tatica,
+        ) ?: return null
+
+        // Em rede os dois lados são humanos: nada de treinador automático.
+        p.desligarIA()
+        souMandanteAoVivo = rede.souMandante
+        taticaDaPartida = e.tatica
+        partidaAoVivo = p
+        return p
+    }
+
+    fun fecharSala() {
+        sala?.fechar()
+        sala = null
+        partidaEmRede = null
+        _estadoRede.value = EstadoRede.Desconectado
+        _estadoPartidaRede.value = null
+        _salasEncontradas.value = emptyList()
+    }
+
+    override fun onCleared() {
+        fecharSala()
+        super.onCleared()
+    }
+
     // --------------------------------------------------- TREINO
 
     fun treinarElenco(foco: FocoTreino, intensidade: Intensidade) =
@@ -536,6 +836,7 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
                 elenco.map { Treino.semana(it, foco, intensidade).jogador }
             }
             db.jogadores().inserirTodos(atualizados)
+            avancarSemanaDeObservacao()
             carregarTudo()
         }
 
@@ -594,4 +895,4 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /** Formação inicial do jogador e das equipes controladas pela IA. */
-fun formacaoPadrao(): List<Slot> = Formacoes.estaticas[2].criarSlots()
+fun formacaoPadrao(): List<Slot> = Formacoes.padrao.criarSlots()

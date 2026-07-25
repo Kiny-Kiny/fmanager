@@ -68,15 +68,15 @@ fun TelaEscalacao(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Formacoes.todas.forEachIndexed { idx, p ->
+            Formacoes.todas.forEachIndexed { idx, f ->
                 FilterChip(
                     selected = formacaoAtiva == idx,
                     onClick = {
                         formacaoAtiva = idx
-                        aplicarFormacao(p, slots)
+                        aplicarFormacao(f, slots)
                         recomposicao++
                     },
-                    label = { Text(p.nome, fontSize = 12.sp) },
+                    label = { Text(f.nome, fontSize = 12.sp) },
                 )
             }
         }
@@ -175,17 +175,6 @@ fun TelaEscalacao(
                 }
                 item { Spacer(Modifier.height(24.dp)) }
             }
-        }
-    }
-}
-
-private fun aplicarFormacao(p: Predefinida, slots: List<Slot>) {
-    val modelo = p.criarSlots()
-    slots.forEachIndexed { i, slot ->
-        val m = modelo.getOrNull(i) ?: return@forEachIndexed
-        Fase.entries.forEach { f ->
-            val origem = m.em(f)
-            slot.em(f).apply { x = origem.x; y = origem.y; papel = origem.papel }
         }
     }
 }

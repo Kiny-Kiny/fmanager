@@ -104,6 +104,25 @@ desconhecidas — autorize para o gerenciador de arquivos que você usou.
 
 ---
 
+## Aplicando uma versão nova do projeto
+
+**Não extraia o zip por cima do repositório.** Se um arquivo foi apagado ou
+renomeado na versão nova, o antigo continua lá e o Kotlin acusa
+`Redeclaration` — duas versões da mesma classe no mesmo projeto. Isso já
+gerou 351 erros de compilação de uma vez.
+
+Use o script que vem no projeto:
+
+```bash
+cd ~/storage/downloads/fmanager
+bash atualizar.sh ~/storage/downloads/FManager.zip
+```
+
+Ele apaga `app/src/main/java` inteiro, extrai a versão nova, e faz
+`git add -A` — que é o comando que registra os arquivos **apagados**, não
+só os alterados. Sem o `-A`, o Git envia os novos e mantém os velhos no
+repositório, e o build quebra do mesmo jeito.
+
 ## O ciclo do dia a dia
 
 Depois de montado, mexer no código é assim:

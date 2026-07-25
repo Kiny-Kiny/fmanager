@@ -156,7 +156,38 @@ fun App(vm: JogoViewModel = viewModel()) {
                 "tabela" -> TelaTabela(estado)
                 "copa" -> TelaCopa(estado, vm) { rota = it }
                 "diretoria" -> TelaDiretoria(estado)
+                "online" -> {
+                    val rede by vm.estadoRede.collectAsState()
+                    val partidaRede by vm.estadoPartidaRede.collectAsState()
+                    val salas by vm.salasEncontradas.collectAsState()
+                    val buscando by vm.procurando.collectAsState()
+                    TelaMultijogador(
+                        estadoRede = rede,
+                        estadoPartida = partidaRede,
+                        salasEncontradas = salas,
+                        procurando = buscando,
+                        onHospedar = { vm.hospedarSala(it) },
+                        onProcurar = { vm.procurarSalas() },
+                        onEntrar = { vm.entrarNaSala(it) },
+                        onConfirmar = {
+                            if (vm.comecarPartidaEmRede() != null) rota = "aovivo"
+                        },
+                        onCancelar = { vm.fecharSala() },
+                    )
+                }
                 "artilharia" -> TelaArtilharia(estado)
+                "analise" -> TelaAnalise(estado, vm)
+                "olheiro" -> {
+                    LaunchedEffect(Unit) { vm.buscarParaOlheiro() }
+                    TelaOlheiro(
+                        jogadores = estado.candidatosOlheiro,
+                        niveis = estado.niveisObservacao,
+                        dnaDoClube = estado.dnaDoClube,
+                        onTrocarDna = { vm.definirDna(it) },
+                        onObservar = { vm.observar(it) },
+                        onPararObservar = { vm.pararDeObservar(it) },
+                    )
+                }
                 "partida" -> TelaPartida(estado)
             }
         }
@@ -170,6 +201,9 @@ private fun tituloDe(rota: String) = when (rota) {
     "copa" -> "Copa Nacional"
     "diretoria" -> "Diretoria"
     "artilharia" -> "Artilharia"
+    "online" -> "Partida local"
+    "olheiro" -> "Olheiros"
+    "analise" -> "Análise"
     "partida" -> "Resumo da partida"
     else -> ""
 }

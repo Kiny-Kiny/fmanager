@@ -98,6 +98,207 @@ sobre-humano acumulando traços.
 
 
 
+
+
+
+## Segundo lote de ideias
+
+### moneyball-mentality (kemogu) — duas ideias, uma delas a melhor do lote
+
+**Desenvolvimento do elenco.** Aquele projeto compara dois retratos do
+elenco em temporadas diferentes e mostra quem evoluiu, atributo por
+atributo. Eu não tinha visto isso em nenhum outro projeto e é a melhor
+ideia deste lote.
+
+Aqui virou automático: ao carregar uma temporada o jogo guarda um retrato
+de cada jogador (`retratos`). Depois dá para responder perguntas que antes
+eram invisíveis — o treino focado em ritmo funcionou? aquele garoto de 18
+cresceu ou estagnou? quem começou a cair?
+
+É a diferença entre saber o overall de hoje e entender a **trajetória**.
+
+**Moneyball.** A pergunta deixa de ser "quem é o melhor?" e passa a ser
+"quem entrega mais por euro?". O cálculo usa **preço por ponto acima de uma
+base**, não preço por overall — porque a curva de preço no futebol é
+exponencial e cada ponto acima de 75 custa desproporcionalmente mais.
+
+**Arquétipos.** Seis categorias em vez de doze posições: goleiro, defensor,
+pressionador, ala, criador, finalizador. Na hora de olhar o mercado você
+normalmente quer "um criador", não especificamente "um MEI".
+
+### FIFA-Player-Recomendation (inboxpraveen)
+
+**Busca por semelhança.** Similaridade de cosseno sobre 20 eixos de
+atributo, de 0 a 100.
+
+Cosseno em vez de distância euclidiana **de propósito**: ele compara o
+PERFIL, não o nível. Um camisa 9 de overall 68 pode ser 94% parecido com um
+de 85 — mesmo tipo de jogador, qualidade diferente. É exatamente isso que
+interessa quando seu titular saiu e você precisa de um substituto que caiba
+no orçamento.
+
+### FplDataCard (nishantbahri)
+
+**Radar de atributos.** Aquele projeto monta cartões visuais em vez de
+tabelas. A diferença prática é grande: uma tabela de 29 atributos obriga a
+ler tudo para formar uma impressão; um radar entrega o perfil de relance.
+
+Usei os **seis arquétipos como eixos**, não os 29 atributos. Radar com
+muitos eixos vira uma bolha ilegível; com seis, cada ponta significa algo e
+a forma inteira é reconhecível.
+
+### O que não entrou, e por quê
+
+**faces-download-fm** (manuelinfosec) e **fm-facepack-downloader**
+(ashenarx) são a mesma ideia — baixar pacotes de rosto para o FM. A API do
+projeto já entrega a imagem da carta de cada jogador, então isso está
+coberto.
+
+**BestPositionsFM** (gyane14) faz o que já foi implementado na rodada
+anterior a partir do PyScoutFM: nota do jogador para cada posição.
+Confirma a decisão, não adiciona nada novo.
+
+**gafferOSv2** (asraym) — não abri este. Fui honesto sobre o critério: com
+sete repositórios, priorizei os que tinham ideia distinta de mecânica sobre
+os que pareciam ferramenta de importação. Se ele tem algo específico que
+você quer, aponta e eu implemento.
+
+## Ideias trazidas de outros projetos
+
+### PyScoutFM (olimorris) — a fonte mais rica
+
+**1. Nota para todas as posições, lado a lado.** O PyScoutFM gera um
+relatório com a nota do jogador em cada posição, ordenável. É assim que se
+acha o lateral que na verdade é um ala, ou o volante que dá um zagueiro
+melhor do que os que você tem. Está em `TelaOlheiro`.
+
+**2. Pesos editáveis.** Lá os pesos por posição ficam num JSON que o
+usuário troca. Aqui `PesosPorPosicao` aceita pesos personalizados em vez
+de esconder números fixos no código.
+
+**3. DNA do clube.** A melhor ideia do conjunto. O autor agrupa atributos
+com pesos próprios para produzir um "rating de DNA" — quanto o jogador
+combina com a *identidade* do clube, não com a posição.
+
+É diferente da adequação que já existia. Adequação responde "ele joga bem
+de lateral?". DNA responde "ele joga do jeito que ESTE clube joga?". Um
+lateral tecnicamente ótimo pode ter DNA baixo num time que vive de
+intensidade física. Quatro identidades: Intensidade, Técnica,
+Verticalidade, Solidez — e o clube já começa com a que mais combina com o
+elenco herdado.
+
+**4. Mascaramento de atributo** (`Observacao.kt`). No PyScoutFM, jogador
+não observado aparece com faixa (`7-11`) e a ferramenta usa o pior valor.
+Isso expôs uma lacuna grande aqui: você via os 29 atributos exatos de 16
+mil jogadores do mundo, de graça — não existia trabalho de olheiro nenhum.
+
+Agora jogador desconhecido mostra **faixa, não número**. Observar custa
+por semana e vai estreitando a faixa em cinco níveis até o valor exato.
+Potencial é o dado mais difícil: no nível 1 só diz "pode crescer".
+
+A faixa é **determinística**, derivada de um hash do id e do atributo. Sem
+isso o número dançaria a cada abertura de tela, o que quebraria a
+confiança na informação.
+
+### Football-Simulator (AllenThomasDev)
+
+**5. Probabilidade por minuto.** Aquele projeto tabelou a chance de cada
+evento minuto a minuto a partir de dados reais, em vez de taxa fixa. Fazia
+falta: no futebol sai mais gol no fim (defesa cansada, time perdendo se
+expõe) e mais cartão depois do intervalo. Meu motor usava taxa achatada
+nos 90 minutos. Agora tem `fatorGol`, `fatorCartao` e `fatorFalta` — o
+minuto 85 tem 30% mais chance de gol que a média, e o cartão quase triplica
+do minuto 20 ao 70.
+
+**6. Escanteios.** Estavam simplesmente ausentes do meu motor. Agora um
+chute bloqueado tem 50% de sair pela linha de fundo. Quem cobra é o melhor
+de cruzamento; quem cabeceia é o melhor de cabeceio e impulsão em campo,
+contra a melhor defesa aérea adversária — e por isso passa a valer escalar
+um zagueiro forte no alto mesmo que não seja o melhor no chão.
+
+### Football-Manager-Game (ErenElagz)
+
+**7. Popularidade separada de força.** O projeto mantém as duas como
+eixos distintos. A reputação aqui já fazia esse papel; o que absorvi foi
+usá-la de forma mais consistente na expectativa da diretoria, que compara
+sua posição com a **força relativa** do clube na liga em vez de uma meta
+fixa.
+
+### Crypto Football Game (ChainInsighter)
+
+Já documentado na seção do multijogador: cadeia de assinaturas, chave de
+sessão por partida e verificação de integridade — que num P2P sem servidor
+deixam de ser exercício educativo e passam a ser a única defesa existente.
+
+## Multijogador local (sem servidor)
+
+Dois aparelhos na mesma rede Wi-Fi jogam um contra o outro. Não existe
+servidor em ponto nenhum do caminho.
+
+### Por que isso é possível: o motor é determinístico
+
+`PartidaAoVivo` recebe um `Random(semente)` e nada mais é aleatório. Dois
+aparelhos com a mesma entrada produzem, gol a gol, **exatamente a mesma
+partida**. Isso permite a arquitetura de **passo trancado**:
+
+1. **OLA** — troca de chaves públicas e nonces
+2. **IMPRESSÃO** — cada lado manda a assinatura da própria base de
+   jogadores. Se não bate, a partida **nem começa**
+3. **ESQUADRÃO** — escalação completa, assinada
+4. **PRONTO** — semente combinada dos dois nonces
+5. Os dois **simulam localmente**
+6. **CHECKSUM** a cada 100 lances, comparado
+7. **FIM** — resultado, também comparado
+
+**Ninguém manda o resultado para o outro.** É isso que impede trapaça sem
+servidor: um cliente modificado não consegue declarar que ganhou. Se a
+simulação dele divergir, o checksum quebra e a partida é anulada. O que
+ele consegue é apenas invalidar o jogo, nunca fabricar um placar.
+
+### Criptografia (ideia trazida do Crypto Football Game)
+
+O repositório de referência é um manager em Python com foco em segurança —
+cadeia de certificados, chave de sessão por partida, dados cifrados. Aqui
+essas ideias não são educativas, são a única defesa que existe:
+
+| Peça | O que resolve |
+|---|---|
+| ECDH (secp256r1) | os dois derivam a mesma chave sem transmiti-la |
+| AES-GCM | ninguém na mesma rede lê nem altera as mensagens |
+| ECDSA | nenhum lado forja um comando "do outro jogador" |
+| Impressão da base | os dois provam ter o mesmo dataset |
+| Código de 6 dígitos | os dois confirmam a olho que não há intermediário |
+
+O **código de verificação** merece nota: um atacante no meio do caminho
+pode trocar as chaves públicas, mas não consegue fazer os dois códigos
+baterem. Se os números diferem na tela dos dois, alguém está no meio. A
+tela expõe isso de propósito, em fonte grande.
+
+Tudo com `java.security` e `javax.crypto` — zero dependência nova.
+
+### Comandos com atraso
+
+Trocar tática não vale no lance atual: vale 12 lances à frente, nos dois
+aparelhos. Sem esse atraso, quem mudou aplicaria antes de o outro receber
+o aviso, e a partir dali as duas simulações seguiriam caminhos diferentes.
+
+### Limites honestos
+
+**Só funciona na mesma rede local.** Jogar pela internet sem servidor é
+impossível: atravessar NAT exige, no mínimo, um servidor de sinalização.
+Não existe truque que contorne isso — quem diz que contorna está usando
+um servidor e chamando de outra coisa.
+
+**A criptografia eleva a barra, não elimina a trapaça.** Quem controla o
+próprio aparelho pode modificar o cliente. O que o desenho garante é que
+uma modificação seja *detectada* (checksum divergente) em vez de aceita.
+Sem servidor de confiança, detectar é o máximo que se consegue.
+
+**O determinismo é frágil.** Qualquer mudança no motor quebra a
+compatibilidade entre versões. Por isso existe o `VERSAO_MOTOR`, checado
+no aperto de mão: melhor recusar a partida do que dessincronizar no
+minuto 60.
+
 ## Design
 
 A direção é uma **prancheta de técnico à noite**: fundo quase preto com um
@@ -169,6 +370,82 @@ Entrou por **migração explícita 1 → 2**, não por recriação. Adicionar
 tabela é operação segura; recriar o banco apagaria os 16 mil jogadores
 importados e obrigaria a esperar a importação inteira de novo. A migração
 está em `AppDatabase.MIGRACAO_1_2`.
+
+
+## Comportamento de função (substituiu os presets de fase)
+
+Correção de um erro de design meu. Antes as fases ofensivas eram
+desenhadas à mão em dois presets — e um deles era o exemplo pessoal de um
+usuário, promovido a padrão do jogo. Isso estava errado.
+
+Agora funciona como no Football Manager: cada jogador tem um
+**comportamento**, e a posição dele com a bola é **calculada**:
+
+```
+COM_POSSE = base defensiva + deslocamento cheio do comportamento
+TRANSICAO = base defensiva + metade do deslocamento
+```
+
+São 18 comportamentos, filtrados pela função — um lateral pode ser
+*Fica na linha de quatro*, *Sobe como ala* ou *Entra no meio*; um volante
+pode ser *Pivô*, *Cai entre os zagueiros* ou *Chega na área*.
+
+O deslocamento lateral é **espelhado**: "para o centro" é direita para
+quem joga na esquerda. Sem isso, um lateral esquerdo invertido sairia
+para fora do campo.
+
+Arrastar na aba **Sem a bola** move as três fases juntas, mantendo a
+coerência do movimento. Arrastar nas outras sobrescreve só aquela — a
+liberdade total continua lá, mas o padrão sai da função, não do gosto de
+ninguém.
+
+## Biblioteca de formações
+
+16 formações com base e comportamentos sugeridos, agrupadas por família:
+
+- **Linha de 4** — 4-4-2, 4-2-3-1, 4-3-3 com volante, 4-3-3 ofensiva,
+  4-1-4-1, 4-4-2 diamante, 4-4-1-1, 4-1-2-1-2 estreito, 4-2-2-2, 4-5-1
+- **Linha de 3** — 3-5-2, 3-4-3, 3-1-4-2
+- **Linha de 5** — 5-3-2, 5-4-1, 5-2-3
+
+Nenhuma tem fase ofensiva escrita à mão. Tudo é calculado.
+
+## Treinador adversário
+
+Antes todo adversário jogava a mesma 4-3-3 com o mesmo estilo
+"equilibrado". A liga inteira não tinha cara, e a sua escolha tática
+valia pouco porque não havia nada para responder.
+
+Agora cada clube da IA tem três coisas:
+
+1. **Formação escolhida pelo elenco.** A lógica é a de um técnico olhando
+   o plantel: tenho pontas? tenho dois centroavantes? sobra zagueiro?
+   Time fraco encolhe e prioriza não tomar gol.
+2. **Estilo derivado dos atributos médios**, com uma variação pequena por
+   clube para dois times de perfil parecido não ficarem idênticos.
+3. **Adaptação a cada 10 minutos de jogo.** Perdendo no fim, sobe a linha
+   e arrisca no passe. Ganhando fora de casa, recua e fecha. Ganhando por
+   três, administra e poupa. Empatando em casa no fim, aprieta.
+
+O sorteio usa o **id do clube como semente**, então o mesmo adversário
+joga sempre igual ao longo da temporada. Ele tem identidade, não é
+aleatório a cada partida.
+
+## Ritmo da partida
+
+Quatro velocidades, calibradas para ~1200 lances por jogo:
+
+| Ritmo | Duração real |
+|---|---|
+| Tempo real | ~14 min |
+| Pausado (padrão) | ~8 min |
+| Normal | ~4 min |
+| Rápido | ~1 min |
+
+O fator de suavização da animação **acompanha o ritmo**. Isso importa:
+antes, num ritmo lento as peças ficavam paradas e depois pulavam de uma
+vez, porque a interpolação era fixa. E a bola agora **viaja** entre
+passador e receptor em vez de teleportar.
 
 ## Motor de partida — cadeia de posse
 
@@ -303,10 +580,8 @@ onde o jogador fica nas outras fases.
 O desenho tático de cada fase é **deduzido das coordenadas**, nunca
 cadastrado. Se sair 6-4-0 ou 5-5-0, é porque foi isso que você desenhou.
 
-Já vem pronta a pré-definida **4-2-3-1 → 3-2-5**: sem a bola é uma
-4-2-3-1 normal; com a bola o primeiro volante cai entre os zagueiros,
-os laterais sobem para alas, o camisa 10 desce para a dupla de volantes
-e os pontas estreitam para perto do centroavante.
+As fases ofensivas são calculadas pelo comportamento de cada função —
+veja a seção "Comportamento de função" acima.
 
 ## As quatro camadas do rendimento
 

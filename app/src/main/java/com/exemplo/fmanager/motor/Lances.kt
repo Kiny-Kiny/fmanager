@@ -66,6 +66,20 @@ sealed interface Lance {
         override fun narrar() = "$autor desarma $vitima"
     }
 
+    data class Escanteio(
+        override val minuto: Int, override val time: String,
+        val cobrador: String, val cabeceio: String?, val perigoso: Boolean,
+    ) : Lance {
+        override val importancia =
+            if (perigoso) Importancia.DESTAQUE else Importancia.ROTINA
+        override fun narrar() = when {
+            cabeceio != null && perigoso ->
+                "Escanteio de $cobrador e $cabeceio cabeceia com perigo!"
+            cabeceio != null -> "$cobrador cobra e $cabeceio cabeceia por cima"
+            else -> "Escanteio de $cobrador afastado pela defesa"
+        }
+    }
+
     data class Impedimento(
         override val minuto: Int, override val time: String,
         val autor: String,
@@ -188,6 +202,7 @@ data class Estatisticas(
     val vermelhos: Int = 0,
     val impedimentos: Int = 0,
     val desarmes: Int = 0,
+    val escanteios: Int = 0,
 ) {
     val precisaoPasse: Int
         get() = if (passes == 0) 0 else (passesCertos * 100) / passes

@@ -6,6 +6,7 @@ import com.exemplo.fmanager.dados.rendimentoEm
 import com.exemplo.fmanager.dados.tracos
 import com.exemplo.fmanager.formacao.*
 import com.exemplo.fmanager.sistemas.CalculadoraEntrosamento
+import com.exemplo.fmanager.sistemas.TreinadorIA
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
@@ -117,6 +118,40 @@ class PartidaAoVivo(
     companion object {
         private const val DURACAO_SEGUNDOS = 90 * 60
         const val MAX_SUBSTITUICOES = 5
+
+        /*
+         * CURVA POR MINUTO — ideia do Football-Simulator.
+         *
+         * Aquele projeto tabelou a probabilidade de cada evento minuto a
+         * minuto a partir de dados reais, em vez de usar uma taxa fixa.
+         * Faz diferença: no futebol de verdade sai mais gol no fim (defesa
+         * cansada, time perdendo se expõe) e mais cartão depois do
+         * intervalo (jogo esquenta, árbitro já avisou).
+         *
+         * Meu motor usava taxa achatada nos 90 minutos. Agora não.
+         */
+        fun fatorGol(minuto: Int): Float = when {
+            minuto < 15 -> 0.82f    // times se estudando
+            minuto < 30 -> 0.95f
+            minuto < 45 -> 1.05f
+            minuto < 50 -> 1.12f    // logo após o intervalo
+            minuto < 70 -> 1.02f
+            minuto < 80 -> 1.12f
+            else -> 1.30f           // desespero e pernas pesadas
+        }
+
+        fun fatorCartao(minuto: Int): Float = when {
+            minuto < 20 -> 0.55f
+            minuto < 45 -> 0.90f
+            minuto < 70 -> 1.15f
+            else -> 1.55f
+        }
+
+        fun fatorFalta(minuto: Int): Float = when {
+            minuto < 15 -> 0.75f
+            minuto < 60 -> 1.0f
+            else -> 1.25f
+        }
     }
 
     /** Estado mutável de uma equipe durante a partida. */
@@ -156,6 +191,12 @@ class PartidaAoVivo(
     private val assistPor = mutableMapOf<Int, Int>()
     private val participaram = mutableSetOf<Int>()
 
+    /** Qual lado é controlado pela IA. O outro é o do usuário. */
+    var equipeDaIA: Boolean = false   // false = visitante é a IA
+        private set
+
+    private var ultimaAdaptacao = -1
+
     /** Quem está com a bola e quem tocou por último (para assistência). */
     private var atacante: Equipe = if (rng.nextBoolean()) casa else fora
     private var portador: JogadorEmCampo = atacante.ativos.random(rng)
@@ -176,32 +217,80 @@ class PartidaAoVivo(
 
     // ---------------------------------------------------- CONTROLES
 
+    /** Diz ao motor qual lado ele deve conduzir taticamente. */
+    fun definirLadoDaIA(iaEhMandante: Boolean) { equipeDaIA = iaEhMandante }
+
+    /**
+     * O treinador adversário reavalia a cada 10 minutos de jogo.
+     * É o que faz a IA parecer que está pensando: perdendo no fim ela
+     * sobe a linha, ganhando fora ela recua.
+     */
+    /** Desliga a adaptação automática. Em rede os dois lados são humanos. */
+    fun desligarIA() { iaAtiva = false }
+
+    private var iaAtiva = true
+
+    private fun adaptarIA() {
+        if (!iaAtiva) return
+        val bloco = minuto / 10
+        if (bloco == ultimaAdaptacao) return
+        ultimaAdaptacao = bloco
+
+        val ia = if (equipeDaIA) casa else fora
+        val saldo = if (equipeDaIA) golsCasa - golsFora else golsFora - golsCasa
+
+        TreinadorIA.adaptar(
+            atual = ia.time.tatica,
+            saldoDoTime = saldo,
+            minuto = minuto,
+            emCasa = ia.mandante,
+        )?.let { nova ->
+            ia.time = ia.time.copy(tatica = nova)
+            ia.forcas = Forcas(ia.time, ia.mandante)
+        }
+    }
+
     fun atualizarTatica(doMandante: Boolean, nova: Tatica) {
         val e = if (doMandante) casa else fora
         e.time = e.time.copy(tatica = nova)
         e.forcas = Forcas(e.time, e.mandante)
     }
 
-    /** Substitui um jogador do time do usuário (sempre o mandante lógico). */
-    fun substituir(sai: Int, entra: Jogador): Lance? {
-        if (casa.substituicoes >= MAX_SUBSTITUICOES) return null
-        val indice = casa.emCampo.indexOfFirst { it.jogador.id == sai }
-        if (indice < 0) return null
-        if (casa.banco.none { it.id == entra.id }) return null
+    /** Substitui no time do mandante. Atalho do modo de um jogador. */
+    fun substituir(sai: Int, entra: Jogador): Lance? =
+        trocar(casa, sai, entra)
 
-        val saindo = casa.emCampo[indice]
+    /**
+     * Substituição por id, escolhendo o lado.
+     *
+     * Necessário para o modo em rede: o comando pode vir do adversário,
+     * e os dois aparelhos precisam aplicar exatamente a mesma troca.
+     */
+    fun substituirPorId(doMandante: Boolean, sai: Int, entraId: Int): Lance? {
+        val e = if (doMandante) casa else fora
+        val entra = e.banco.firstOrNull { it.id == entraId } ?: return null
+        return trocar(e, sai, entra)
+    }
+
+    private fun trocar(e: Equipe, sai: Int, entra: Jogador): Lance? {
+        if (e.substituicoes >= MAX_SUBSTITUICOES) return null
+        val indice = e.emCampo.indexOfFirst { it.jogador.id == sai }
+        if (indice < 0) return null
+        if (e.banco.none { it.id == entra.id }) return null
+
+        val saindo = e.emCampo[indice]
         // O reserva herda o slot, as instruções e o estilo de quem saiu.
-        casa.emCampo[indice] = saindo.copy(jogador = entra)
-        casa.banco.removeAll { it.id == entra.id }
-        casa.banco.add(saindo.jogador)
-        casa.substituicoes++
+        e.emCampo[indice] = saindo.copy(jogador = entra)
+        e.banco.removeAll { it.id == entra.id }
+        e.banco.add(saindo.jogador)
+        e.substituicoes++
         gas[entra.id] = 100f
         participaram += entra.id
-        casa.recalcular()
+        e.recalcular()
 
-        if (portador.jogador.id == sai) portador = casa.emCampo[indice]
+        if (portador.jogador.id == sai) portador = e.emCampo[indice]
 
-        val l = Lance.Substituicao(minuto, casa.time.nome,
+        val l = Lance.Substituicao(minuto, e.time.nome,
             saindo.jogador.nome, entra.nome)
         historico += l
         return l
@@ -214,6 +303,7 @@ class PartidaAoVivo(
 
         passeDe = null
         desgastar()
+        adaptarIA()
 
         val defensor = if (atacante === casa) fora else casa
         atacante.momentosComBola++
@@ -383,7 +473,8 @@ class PartidaAoVivo(
         }
 
         // O desarme falhou: pode virar falta, e na área é pênalti.
-        val faltaProvavel = (marcador.jogador.agressividade / 100f) * 0.42f
+        val faltaProvavel = (marcador.jogador.agressividade / 100f) * 0.42f *
+                fatorFalta(minuto)
         if (rng.nextFloat() < faltaProvavel) {
             return cometerFalta(defensor, marcador, portador)
         }
@@ -507,7 +598,7 @@ class PartidaAoVivo(
     private fun cartaoSeNecessario(
         equipe: Equipe, jc: JogadorEmCampo, gravidade: Float,
     ) {
-        if (rng.nextFloat() >= gravidade) return
+        if (rng.nextFloat() >= gravidade * fatorCartao(minuto)) return
         val id = jc.jogador.id
         val segundoAmarelo = id in equipe.amarelados
 
@@ -540,14 +631,20 @@ class PartidaAoVivo(
         // Bloqueio da defesa antes de chegar ao goleiro.
         val marcador = marcadorMaisProximo(defensor, portador)
         if (marcador != null && rng.nextFloat() < 0.20f) {
-            trocarPosse(defensor)
             avancarRelogio(6)
-            return Lance.Chute(minuto, atacante.time.nome, j.nome,
-                Lance.Desfecho.BLOQUEADO)
+            // Metade dos bloqueios sai pela linha de fundo: escanteio.
+            return if (rng.nextFloat() < 0.5f) baterEscanteio(defensor)
+            else {
+                trocarPosse(defensor)
+                Lance.Chute(minuto, atacante.time.nome, j.nome,
+                    Lance.Desfecho.BLOQUEADO)
+            }
         }
 
         val goleiro = qualidadeGoleiro(defensor)
-        val probGol = (qualidade / (qualidade + goleiro * 1.55f)).coerceIn(0.03f, 0.52f)
+        val probGol = (qualidade * fatorGol(minuto) /
+                (qualidade * fatorGol(minuto) + goleiro * 1.55f))
+            .coerceIn(0.03f, 0.55f)
 
         if (rng.nextFloat() < probGol) {
             val assistente = ultimoPassador?.takeIf { it !== portador }
@@ -569,6 +666,63 @@ class PartidaAoVivo(
         trocarPosse(defensor)
         avancarRelogio(14)
         return Lance.Chute(minuto, atacante.time.nome, j.nome, desfecho)
+    }
+
+    /**
+     * Escanteio. Quem cobra é o melhor de cruzamento; quem cabeceia é o
+     * mais alto e melhor de cabeceio em campo — e por isso vale escalar
+     * um zagueiro forte no alto mesmo que ele não seja o melhor no chão.
+     */
+    private fun baterEscanteio(defensor: Equipe): Lance {
+        atacante.stats = atacante.stats.copy(
+            escanteios = atacante.stats.escanteios + 1)
+        avancarRelogio(20)
+
+        val cobrador = atacante.ativos
+            .filter { it.slot.em(Fase.SEM_POSSE).papel != Papel.GOL }
+            .maxByOrNull { it.jogador.cruzamento } ?: return perderBola(defensor, null)
+
+        val cabeceador = atacante.ativos
+            .filter { it !== cobrador && it.slot.em(Fase.SEM_POSSE).papel != Papel.GOL }
+            .maxByOrNull { it.jogador.cabeceio * 0.6f + it.jogador.impulsao * 0.4f }
+
+        if (cabeceador == null) {
+            trocarPosse(defensor)
+            return Lance.Escanteio(minuto, atacante.time.nome,
+                cobrador.jogador.nome, null, perigoso = false)
+        }
+
+        // A defesa aérea adversária decide se a bola chega limpa.
+        val defesaAerea = defensor.ativos
+            .map { it.jogador.cabeceio * 0.5f + it.jogador.impulsao * 0.5f }
+            .maxOrNull() ?: 60f
+
+        val ataqueAereo = (cobrador.jogador.cruzamento * 0.4f +
+                cabeceador.jogador.cabeceio * 0.4f +
+                cabeceador.jogador.impulsao * 0.2f)
+
+        val chegou = rng.nextFloat() < (ataqueAereo / (ataqueAereo + defesaAerea))
+        if (!chegou) {
+            trocarPosse(defensor)
+            return Lance.Escanteio(minuto, atacante.time.nome,
+                cobrador.jogador.nome, null, perigoso = false)
+        }
+
+        atacante.stats = atacante.stats.copy(chutes = atacante.stats.chutes + 1)
+        val probGol = (0.09f * fatorGol(minuto) *
+                (ataqueAereo / 75f)).coerceIn(0.03f, 0.24f)
+
+        if (rng.nextFloat() < probGol) {
+            marcarGol(cabeceador, cobrador, defensor, dePenalti = false)
+            return Lance.Gol(minuto, atacante.time.nome,
+                cabeceador.jogador.nome, cobrador.jogador.nome, dePenalti = false)
+        }
+
+        atacante.stats = atacante.stats.copy(
+            chutesNoGol = atacante.stats.chutesNoGol + 1)
+        trocarPosse(defensor)
+        return Lance.Escanteio(minuto, atacante.time.nome,
+            cobrador.jogador.nome, cabeceador.jogador.nome, perigoso = true)
     }
 
     private fun marcarGol(

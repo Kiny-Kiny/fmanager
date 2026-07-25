@@ -5,10 +5,17 @@
          inteiro sem rede: os dados ficam no SQLite local. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Multijogador local: descoberta por broadcast UDP e conexão TCP
+         direta entre os dois aparelhos. Nenhum servidor no caminho. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
     <application
         android:allowBackup="true"
         android:label="FManager"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.FManager">
 
         <activity

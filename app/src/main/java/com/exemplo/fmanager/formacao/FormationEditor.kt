@@ -130,9 +130,10 @@ fun EditorFormacaoScreen(
                 onClick = { slots.forEach { it.copiarFase(Fase.COM_POSSE, Fase.TRANSICAO) } },
                 label = { Text("Transição = ataque") },
             )
-            Formacoes.comFases.forEach { p ->
-                AssistChip(onClick = { aplicar(p, slots) }, label = { Text(p.nome) })
-            }
+            AssistChip(
+                onClick = { slots.forEach { it.recalcularFases() } },
+                label = { Text("Recalcular pelas funções") },
+            )
         }
     }
 
@@ -147,15 +148,16 @@ fun EditorFormacaoScreen(
     }
 }
 
-/** Aplica uma pré-definida sem trocar os jogadores já escalados. */
-private fun aplicar(p: Predefinida, slots: List<Slot>) {
-    val modelo = p.criarSlots()
+/** Aplica uma formação da biblioteca sem trocar os jogadores escalados. */
+internal fun aplicarFormacao(f: Formacao, slots: List<Slot>) {
+    val modelo = f.criarSlots()
     slots.forEachIndexed { i, slot ->
         val m = modelo.getOrNull(i) ?: return@forEachIndexed
-        Fase.entries.forEach { f ->
-            val origem = m.em(f)
-            slot.em(f).apply { x = origem.x; y = origem.y; papel = origem.papel }
+        val base = m.em(Fase.SEM_POSSE)
+        slot.em(Fase.SEM_POSSE).apply {
+            x = base.x; y = base.y; papel = base.papel
         }
+        slot.definirComportamento(m.comportamento)
     }
 }
 
@@ -372,15 +374,54 @@ private fun PainelJogador(slot: Slot, fase: Fase, jogador: Jogador?) {
 
         Spacer(Modifier.height(16.dp))
         TabRow(aba, containerColor = Gramado, contentColor = Destaque) {
-            listOf("Instruções", "Estilo").forEachIndexed { i, t ->
+            listOf("Função", "Instruções", "Estilo").forEachIndexed { i, t ->
                 Tab(aba == i, { aba = i }, text = { Text(t) })
             }
         }
         Spacer(Modifier.height(16.dp))
 
-        if (aba == 0) InstrucoesIndividuais(slot, pos)
-        else EstiloDoJogador(slot, pos, jogador)
+        when (aba) {
+            0 -> ComportamentoDaFuncao(slot, pos)
+            1 -> InstrucoesIndividuais(slot, pos)
+            else -> EstiloDoJogador(slot, pos, jogador)
+        }
     }
+}
+
+/**
+ * Escolha da função. Trocar aqui recalcula as fases ofensivas na hora —
+ * é o coração do sistema: o movimento sai da função, não de um desenho
+ * pronto que alguém escolheu por você.
+ */
+@Composable
+private fun ComportamentoDaFuncao(slot: Slot, pos: PosicaoFase) {
+    val opcoes = Comportamento.paraPapel(pos.papel)
+
+    Text("Como ${pos.papel.sigla} se comporta com a bola",
+        style = MaterialTheme.typography.bodySmall, color = TextoFraco)
+    Spacer(Modifier.height(10.dp))
+
+    opcoes.forEach { c ->
+        val ativo = slot.comportamento == c
+        Surface(
+            onClick = { slot.definirComportamento(c) },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = if (ativo) Destaque.copy(alpha = .16f) else GramadoClaro,
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Text(c.rotulo, style = MaterialTheme.typography.bodyMedium,
+                    color = if (ativo) Destaque else Texto)
+                Text(c.descricao, style = MaterialTheme.typography.bodySmall,
+                    color = TextoFraco)
+            }
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Text("Arrastar na aba \"Sem a bola\" move as três fases juntas. " +
+            "Arrastar nas outras sobrescreve só aquela.",
+        style = MaterialTheme.typography.labelSmall, color = TextoFraco)
 }
 
 @Composable

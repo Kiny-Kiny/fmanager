@@ -272,11 +272,14 @@ fun TelaPainel(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Secao("Mais")
                 listOf(
+                    "olheiro" to "Olheiros e relatórios",
+                    "analise" to "Análise: evolução, garimpo, parecidos",
                     "elenco" to "Elenco completo",
                     "treino" to "Centro de treinamento",
                     "tabela" to "Classificação",
                     "artilharia" to "Artilharia",
                     "copa" to "Copa Nacional",
+                    "online" to "Jogar contra alguém na sua rede",
                 ).forEach { (r, rotulo) ->
                     Surface(
                         Modifier.fillMaxWidth().padding(vertical = 3.dp)

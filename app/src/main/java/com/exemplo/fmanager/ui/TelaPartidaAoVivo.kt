@@ -41,10 +41,25 @@ import kotlinx.coroutines.delay
  * peças a 60fps recomporiam a tela inteira 60 vezes por segundo.
  */
 
-enum class Velocidade(val rotulo: String, val msPorLance: Long) {
-    DETALHADO("Lance a lance", 320),
-    NORMAL("Normal", 130),
-    RAPIDO("Rápido", 45),
+/**
+ * Ritmo da partida. O valor é quanto tempo real cada lance ocupa.
+ *
+ * Uma partida tem ~1200 lances, então:
+ *   COMPLETO ≈ 14 min · PAUSADO ≈ 8 min · NORMAL ≈ 4 min · RAPIDO ≈ 1 min
+ *
+ * O fator de suavização acompanha: quanto mais lento o ritmo, mais
+ * gradual o deslocamento das peças. Sem isso, um ritmo lento fazia as
+ * peças ficarem paradas e depois pularem de uma vez.
+ */
+enum class Velocidade(
+    val rotulo: String,
+    val msPorLance: Long,
+    val suavizacao: Float,
+) {
+    COMPLETO("Tempo real", 700, 0.035f),
+    PAUSADO("Pausado", 400, 0.055f),
+    NORMAL("Normal", 200, 0.09f),
+    RAPIDO("Rápido", 60, 0.20f),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,7 +73,7 @@ fun TelaPartidaAoVivo(
     onTerminar: () -> Unit,
 ) {
     var instante by remember { mutableStateOf<Instante?>(null) }
-    var velocidade by remember { mutableStateOf(Velocidade.NORMAL) }
+    var velocidade by remember { mutableStateOf(Velocidade.PAUSADO) }
     var pausado by remember { mutableStateOf(false) }
     var pulou by remember { mutableStateOf(false) }
     var painel by remember { mutableStateOf<String?>(null) }
@@ -91,21 +106,25 @@ fun TelaPartidaAoVivo(
     }
 
     // ---------------------------------------------- LOOP DE ANIMAÇÃO
-    LaunchedEffect(Unit) {
+    LaunchedEffect(velocidade) {
         while (true) {
             withFrameNanos {
                 val i = instante ?: return@withFrameNanos
+                val k = velocidade.suavizacao
                 i.pecas.forEach { p ->
                     val alvo = Offset(p.x, p.y)
                     val atual = posicoes[p.jogadorId] ?: alvo
                     posicoes[p.jogadorId] = Offset(
-                        atual.x + (alvo.x - atual.x) * 0.13f,
-                        atual.y + (alvo.y - atual.y) * 0.13f,
+                        atual.x + (alvo.x - atual.x) * k,
+                        atual.y + (alvo.y - atual.y) * k,
                     )
                 }
+                // A bola viaja mais rápido que os jogadores, mas ainda
+                // viaja: antes ela teleportava para os pés do receptor.
+                val kb = (k * 2.2f).coerceAtMost(0.45f)
                 bola = Offset(
-                    bola.x + (i.bolaX - bola.x) * 0.30f,
-                    bola.y + (i.bolaY - bola.y) * 0.30f,
+                    bola.x + (i.bolaX - bola.x) * kb,
+                    bola.y + (i.bolaY - bola.y) * kb,
                 )
                 passe = if (i.passeDeX != null && i.passeDeY != null)
                     Offset(i.passeDeX, i.passeDeY) else null

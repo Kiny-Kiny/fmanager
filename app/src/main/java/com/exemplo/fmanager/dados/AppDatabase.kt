@@ -3,6 +3,8 @@ package com.exemplo.fmanager.dados
 import android.content.Context
 import androidx.room.*
 import androidx.room.migration.Migration
+import com.exemplo.fmanager.sistemas.Observacao
+import com.exemplo.fmanager.sistemas.RetratoJogador
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Dao
@@ -89,6 +91,59 @@ interface CarreiraDao {
 }
 
 @Dao
+interface RetratoDao {
+    @Query("SELECT * FROM retratos WHERE jogadorId = :id AND temporada = :temporada")
+    suspend fun de(id: Int, temporada: Int): RetratoJogador?
+
+    @Query("SELECT * FROM retratos WHERE temporada = :temporada")
+    suspend fun daTemporada(temporada: Int): List<RetratoJogador>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun salvarTodos(lista: List<RetratoJogador>)
+
+    @Query("SELECT COUNT(*) FROM retratos WHERE temporada = :temporada")
+    suspend fun total(temporada: Int): Int
+}
+
+@Dao
+interface ObservacaoDao {
+    @Query("SELECT * FROM observacoes WHERE jogadorId = :id")
+    suspend fun de(id: Int): Observacao?
+
+    @Query("SELECT * FROM observacoes WHERE nivel > 0")
+    suspend fun ativas(): List<Observacao>
+
+    @Query("SELECT nivel FROM observacoes WHERE jogadorId = :id")
+    suspend fun nivelDe(id: Int): Int?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun salvar(o: Observacao)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun salvarTodas(lista: List<Observacao>)
+
+    @Query("DELETE FROM observacoes WHERE jogadorId = :id")
+    suspend fun parar(id: Int)
+}
+
+@Dao
+interface ImpressaoDao {
+    /**
+     * Assinatura da base de jogadores.
+     *
+     * Total, soma dos ids e soma dos overalls. Não é criptográfico, mas
+     * pega qualquer diferença de dataset — e é o que os dois clientes
+     * comparam antes de começar uma partida em rede.
+     */
+    @Query("""
+        SELECT COUNT(*) || ':' || COALESCE(SUM(id), 0) || ':' ||
+               COALESCE(SUM(geral), 0) || ':' || COALESCE(SUM(potencial), 0)
+        FROM jogadores
+    """)
+    suspend fun daBase(): String
+}
+
+@Dao
 interface EstatisticaDao {
 
     @Query("SELECT * FROM estatisticas WHERE jogadorId = :id AND temporada = :temporada")
@@ -131,8 +186,8 @@ interface EstatisticaDao {
 @Database(
     entities = [Jogador::class, Clube::class, Liga::class,
         Contrato::class, Partida::class, Carreira::class,
-        EstatisticaJogador::class],
-    version = 2,
+        EstatisticaJogador::class, Observacao::class, RetratoJogador::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -143,6 +198,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun partidas(): PartidaDao
     abstract fun carreira(): CarreiraDao
     abstract fun estatisticas(): EstatisticaDao
+    abstract fun impressao(): ImpressaoDao
+    abstract fun observacoes(): ObservacaoDao
+    abstract fun retratos(): RetratoDao
 
     companion object {
         @Volatile private var instancia: AppDatabase? = null
@@ -154,6 +212,45 @@ abstract class AppDatabase : RoomDatabase() {
          * os 16 mil jogadores importados e obrigaria a esperar a
          * importação inteira de novo.
          */
+        /** Versão 3 → 4: retratos por temporada. Aditiva. */
+        private val MIGRACAO_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS retratos (
+                        jogadorId INTEGER NOT NULL,
+                        temporada INTEGER NOT NULL,
+                        idade INTEGER NOT NULL,
+                        geral INTEGER NOT NULL,
+                        potencial INTEGER NOT NULL,
+                        atributos TEXT NOT NULL,
+                        PRIMARY KEY(jogadorId, temporada)
+                    )
+                """)
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_retratos_temporada " +
+                            "ON retratos(temporada)"
+                )
+            }
+        }
+
+        /** Versão 2 → 3: tabela de observação de olheiro. Aditiva. */
+        private val MIGRACAO_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS observacoes (
+                        jogadorId INTEGER NOT NULL,
+                        nivel INTEGER NOT NULL DEFAULT 0,
+                        semanas INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(jogadorId)
+                    )
+                """)
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_observacoes_nivel " +
+                            "ON observacoes(nivel)"
+                )
+            }
+        }
+
         private val MIGRACAO_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""
@@ -191,7 +288,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // Se um dia você quiser embutir o banco já pronto
                     // em vez de importar o CSV na primeira execução:
                     // .createFromAsset("fmanager.db")
-                    .addMigrations(MIGRACAO_1_2)
+                    .addMigrations(MIGRACAO_1_2, MIGRACAO_2_3, MIGRACAO_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instancia = it }

@@ -465,6 +465,7 @@ fun TelaPartida(e: EstadoJogo) {
                 "Faltas" to ("${a.faltas}" to "${b.faltas}"),
                 "Cartões" to
                         ("${a.amarelos + a.vermelhos}" to "${b.amarelos + b.vermelhos}"),
+                "Escanteios" to ("${a.escanteios}" to "${b.escanteios}"),
                 "Impedimentos" to ("${a.impedimentos}" to "${b.impedimentos}"),
                 "Desarmes" to ("${a.desarmes}" to "${b.desarmes}"),
             ).forEach { (rotulo, valores) ->
