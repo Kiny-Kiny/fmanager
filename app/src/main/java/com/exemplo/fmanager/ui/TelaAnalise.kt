@@ -35,14 +35,15 @@ fun TelaAnalise(e: EstadoJogo, vm: JogoViewModel) {
 
     Column(Modifier.fillMaxSize()) {
         TabRow(aba, containerColor = Fundo, contentColor = Destaque) {
-            listOf("Evolução", "Garimpo", "Parecidos").forEachIndexed { i, t ->
+            listOf("Evolução", "Garimpo", "Parecidos", "Motor").forEachIndexed { i, t ->
                 Tab(aba == i, { aba = i }, text = { Text(t, fontSize = 13.sp) })
             }
         }
         when (aba) {
             0 -> AbaEvolucao(e, vm)
             1 -> AbaGarimpo(e, vm)
-            else -> AbaParecidos(e, vm)
+            2 -> AbaParecidos(e, vm)
+            else -> AbaCalibracao(e, vm)
         }
     }
 }
@@ -301,5 +302,49 @@ private fun AbaParecidos(e: EstadoJogo, vm: JogoViewModel) {
         }
 
         item { Spacer(Modifier.height(90.dp)) }
+    }
+}
+
+// -------------------------------------------------------- CALIBRAÇÃO
+
+@Composable
+private fun AbaCalibracao(e: EstadoJogo, vm: JogoViewModel) {
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+    ) {
+        Text(
+            "Roda 40 partidas em segundos e compara as médias com os " +
+                    "números do futebol real. Serve para verificar se o motor " +
+                    "está calibrado sem você jogar uma temporada inteira.",
+            style = MaterialTheme.typography.bodySmall, color = TextoMedio,
+        )
+        Spacer(Modifier.height(14.dp))
+
+        Button(
+            onClick = { vm.rodarCalibracao() },
+            enabled = !e.calibrando,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Text(if (e.calibrando) "Simulando..." else "Rodar 40 partidas")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        if (e.calibracao.isNotBlank()) {
+            Surface(
+                Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+                color = SuperficieAlta,
+            ) {
+                Text(
+                    e.calibracao,
+                    Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Texto,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            }
+        }
     }
 }

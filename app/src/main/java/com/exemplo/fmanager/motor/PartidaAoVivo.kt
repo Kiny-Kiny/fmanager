@@ -7,6 +7,7 @@ import com.exemplo.fmanager.dados.tracos
 import com.exemplo.fmanager.formacao.*
 import com.exemplo.fmanager.sistemas.CalculadoraEntrosamento
 import com.exemplo.fmanager.sistemas.TreinadorIA
+import com.exemplo.fmanager.formacao.InstrucaoEquipe
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
@@ -329,11 +330,18 @@ class PartidaAoVivo(
         // Decide o que o portador faz. Os pesos saem dos atributos dele,
         // de onde está no campo e das instruções que você deu.
         val j = portador.jogador
-        val pesoChute = if (avanco > 0.60f) {
-            (j.finalizacao / 100f) * (avanco - 0.55f) * 4.2f *
-                    portador.mod.pesoFinalizacao *
-                    (1f + atacante.forcas.tatica.liberdadeCriativa / 300f)
-        } else 0.01f
+        val lateral = posicaoDoLado(portador)
+
+        // Decisão calibrada: antes 48% dos lances em zona adiantada
+        // viravam chute. Time nenhum finaliza a cada dois toques.
+        val pesoChute = Finalizacao.pesoDeChutar(
+            avanco = avanco,
+            lateral = lateral,
+            finalizacao = j.finalizacao,
+            pressao = pressao,
+            liberdadeCriativa = atacante.forcas.tatica.liberdadeCriativa,
+            pesoDoEstilo = portador.mod.pesoFinalizacao,
+        )
 
         val pesoDrible = (j.drible / 100f) * (j.agilidade / 100f) *
                 (1f + atacante.forcas.tatica.liberdadeCriativa / 150f) *
@@ -369,7 +377,10 @@ class PartidaAoVivo(
 
         passeDe = posicaoAbsoluta(portador, atacante)
         atacante.stats = atacante.stats.copy(passes = atacante.stats.passes + 1)
-        avancarRelogio(if (longo) 5 else 3)
+        // Toque curto consome pouco tempo; lançamento consome mais. É
+        // isso que faz um time de posse dar 500 passes e um de ligação
+        // direta dar 300.
+        avancarRelogio(if (longo) 6 else 2)
 
         // Precisão do passe: atributo do passador contra a pressão e o
         // risco que a tática pede. Passe longo é mais difícil.
@@ -413,17 +424,33 @@ class PartidaAoVivo(
         val opcoes = atacante.ativos.filter { it !== portador }
         if (opcoes.isEmpty()) return null
 
+        val bruta = atacante.time.tatica
         val vertical = atacante.forcas.tatica.velocidadeConstrucao / 100f
+
         val pesos = opcoes.map { alvo ->
-            val avancoAlvo = posicaoDeAtaque(alvo)
+            val posAlvo = alvo.slot.em(Fase.COM_POSSE)
+            val avancoAlvo = posAlvo.y
             val ganho = (avancoAlvo - avanco).coerceIn(-1f, 1f)
-            // Tática vertical procura quem está à frente; posse aceita
-            // o passe lateral e para trás.
             val direcao = 1f + ganho * (0.4f + vertical * 1.4f)
             val distancia = distanciaEntre(portador, alvo)
-            val proximidade = (1f - distancia).coerceAtLeast(0.12f)
+
+            // Passe curto é MUITO mais provável que o longo — é o que
+            // gera a sequência de toques em vez de bola pra frente.
+            val proximidade = (1f - distancia * 1.35f).coerceAtLeast(0.06f)
             val livre = 1f - pressaoSobre(alvo, defensor) * 0.7f
-            (direcao.coerceAtLeast(0.08f) * proximidade * livre *
+
+            // Instruções de equipe redirecionam a bola de verdade.
+            val central = 1f - abs(posAlvo.x - 0.5f) * 2f
+            val porInstrucao = when {
+                bruta.tem(InstrucaoEquipe.EXPLORAR_OS_LADOS) ->
+                    1f + (1f - central) * 0.75f
+                bruta.tem(InstrucaoEquipe.JOGAR_PELO_MEIO) ->
+                    1f + central * 0.7f
+                else -> 1f
+            } * if (bruta.tem(InstrucaoEquipe.BOLA_NO_HOMEM_ALVO) &&
+                posAlvo.papel == Papel.ATA) 1.8f else 1f
+
+            (direcao.coerceAtLeast(0.08f) * proximidade * livre * porInstrucao *
                     (alvo.jogador.controleBola / 100f) + 0.02f)
         }
         var t = rng.nextFloat() * pesos.sum()
@@ -622,29 +649,29 @@ class PartidaAoVivo(
         avancarRelogio(5)
 
         val j = portador.jogador
-        val fatorGas = gas.getValue(j.id) / 100f
-        val qualidade = ((j.finalizacao * 0.42f + j.forcaChute * 0.18f +
-                j.sangueFrio * 0.2f + j.posicionamento * 0.2f) *
-                portador.eficiencia(Fase.COM_POSSE) * fatorGas *
-                portador.tracos.finalizacao) * (0.55f + avanco * 0.7f)
+        val lateral = posicaoDoLado(portador)
+        val pressao = pressaoSobre(portador, defensor)
 
-        // Bloqueio da defesa antes de chegar ao goleiro.
-        val marcador = marcadorMaisProximo(defensor, portador)
-        if (marcador != null && rng.nextFloat() < 0.20f) {
-            avancarRelogio(6)
-            // Metade dos bloqueios sai pela linha de fundo: escanteio.
-            return if (rng.nextFloat() < 0.5f) baterEscanteio(defensor)
-            else {
-                trocarPosse(defensor)
-                Lance.Chute(minuto, atacante.time.nome, j.nome,
-                    Lance.Desfecho.BLOQUEADO)
-            }
-        }
-
-        val goleiro = qualidadeGoleiro(defensor)
-        val probGol = (qualidade * fatorGol(minuto) /
-                (qualidade * fatorGol(minuto) + goleiro * 1.55f))
-            .coerceIn(0.03f, 0.55f)
+        /*
+         * A POSIÇÃO manda. O xG da zona é a âncora; o finalizador, o
+         * goleiro e a pressão só temperam em torno dele. Antes o cálculo
+         * era atacante-contra-goleiro e dava 41% de conversão — o real
+         * é 10-11%.
+         */
+        val xG = Finalizacao.xG(avanco, lateral)
+        val probGol = Finalizacao.probabilidade(
+            xG = xG,
+            finalizador = Finalizacao.fatorFinalizador(
+                finalizacao = j.finalizacao,
+                sangueFrio = j.sangueFrio,
+                eficienciaNaPosicao = portador.eficiencia(Fase.COM_POSSE),
+                gas = gas.getValue(j.id) / 100f,
+                bonusTracos = portador.tracos.finalizacao,
+            ),
+            goleiro = Finalizacao.fatorGoleiro(qualidadeGoleiro(defensor)),
+            pressao = Finalizacao.fatorPressao(pressao),
+            minuto = fatorGol(minuto),
+        )
 
         if (rng.nextFloat() < probGol) {
             val assistente = ultimoPassador?.takeIf { it !== portador }
@@ -653,18 +680,23 @@ class PartidaAoVivo(
                 assistente?.jogador?.nome, dePenalti = false)
         }
 
-        val sorteio = rng.nextFloat()
-        val desfecho = when {
-            sorteio < 0.46f -> Lance.Desfecho.DEFENDIDO
-            sorteio < 0.86f -> Lance.Desfecho.PARA_FORA
-            else -> Lance.Desfecho.NA_TRAVE
-        }
+        val desfecho = Finalizacao.desfecho(
+            j.finalizacao, pressao, rng.nextFloat())
+
         if (desfecho == Lance.Desfecho.DEFENDIDO) {
             atacante.stats = atacante.stats.copy(
                 chutesNoGol = atacante.stats.chutesNoGol + 1)
+            trocarPosse(defensor)
+            avancarRelogio(12)
+        } else if (desfecho == Lance.Desfecho.BLOQUEADO) {
+            avancarRelogio(6)
+            // Metade dos bloqueios sai pela linha de fundo: escanteio.
+            if (rng.nextFloat() < 0.5f) return baterEscanteio(defensor)
+            trocarPosse(defensor)
+        } else {
+            trocarPosse(defensor)
+            avancarRelogio(16)
         }
-        trocarPosse(defensor)
-        avancarRelogio(14)
         return Lance.Chute(minuto, atacante.time.nome, j.nome, desfecho)
     }
 

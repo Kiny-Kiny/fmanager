@@ -7,6 +7,33 @@ package com.exemplo.fmanager.formacao
  * Junto com as instruções individuais de cada slot, é isso que forma
  * o "seu estilo" — não existe preset escondido por trás.
  */
+/*
+ * INSTRUÇÕES DE EQUIPE — no modelo do Football Manager.
+ *
+ * Diferente dos sete controles contínuos: são interruptores que mudam
+ * comportamentos específicos, e cada um tem um custo real. Linha de
+ * impedimento rouba muitas bolas e toma gol nas costas. Cera protege o
+ * resultado e cansa o time. Nada é grátis.
+ */
+enum class InstrucaoEquipe(val rotulo: String, val descricao: String) {
+    LINHA_DE_IMPEDIMENTO("Linha de impedimento",
+        "Rouba muitas bolas no impedimento, mas expõe as costas da zaga."),
+    PRESSAO_APOS_PERDA("Pressão após perda",
+        "Cinco segundos de caça à bola ao perder. Cansa muito."),
+    EXPLORAR_OS_LADOS("Explorar os lados",
+        "Concentra a construção pelos corredores e cruza mais."),
+    JOGAR_PELO_MEIO("Jogar pelo meio",
+        "Insiste no miolo. Mais chance clara, mais bola perdida."),
+    BOLA_NO_HOMEM_ALVO("Bola no homem-alvo",
+        "Prioriza o passe no atacante de referência."),
+    FAZER_CERA("Fazer cera",
+        "Segura o resultado gastando tempo. A torcida detesta."),
+    SAIR_JOGANDO_CURTO("Sair jogando curto",
+        "Constrói do goleiro. Bonito quando dá certo, fatal quando não."),
+    TIRO_LONGO_DO_GOLEIRO("Ligação direta",
+        "Goleiro lança. Perde posse, mas evita risco na saída.");
+}
+
 data class Tatica(
     /** 0 = toque de bola paciente, 100 = vertical direto */
     val velocidadeConstrucao: Int = 50,
@@ -29,30 +56,94 @@ data class Tatica(
     /** Quanto risco assumir no passe. Mais risco = mais chance criada
      *  e mais perda de posse. */
     val riscoNoPasse: Int = 50,
-)
+
+    /**
+     * MENTALIDADE — o controle mestre, como no FM.
+     *
+     * 0 = muito retraído, 100 = muito ofensivo. Não substitui os outros
+     * sete: ele os DESLOCA. Assim você ajusta a postura geral com um
+     * gesto e continua podendo afinar cada peça depois.
+     */
+    val mentalidade: Int = 50,
+
+    val instrucoes: Set<InstrucaoEquipe> = emptySet(),
+) {
+    /**
+     * Os valores efetivos, com a mentalidade aplicada.
+     *
+     * O motor lê ESTES, não os brutos. É isso que faz a mentalidade
+     * valer de verdade em vez de ser um número decorativo.
+     */
+    fun efetiva(): Tatica {
+        val d = (mentalidade - 50) / 50f    // -1 .. +1
+        fun m(v: Int, peso: Float) = (v + d * peso).toInt().coerceIn(0, 100)
+
+        return copy(
+            alturaLinha = m(alturaLinha, 26f),
+            intensidadePressao = m(intensidadePressao, 20f),
+            velocidadeConstrucao = m(velocidadeConstrucao, 14f),
+            riscoNoPasse = m(riscoNoPasse, 18f),
+            contraAtaque = m(contraAtaque, -16f),
+            compactacao = m(compactacao, -10f),
+        )
+    }
+
+    fun tem(i: InstrucaoEquipe) = i in instrucoes
+
+    fun alternar(i: InstrucaoEquipe) = copy(
+        instrucoes = if (tem(i)) instrucoes - i else instrucoes + i
+    )
+
+    val rotuloMentalidade: String get() = when {
+        mentalidade >= 84 -> "Muito ofensiva"
+        mentalidade >= 66 -> "Ofensiva"
+        mentalidade >= 56 -> "Positiva"
+        mentalidade >= 45 -> "Equilibrada"
+        mentalidade >= 34 -> "Cautelosa"
+        mentalidade >= 16 -> "Defensiva"
+        else -> "Muito retraída"
+    }
+}
 
 /** Presets como ponto de partida — você edita tudo depois. */
 object Estilos {
-    val equilibrado = Tatica()
+    val equilibrado = Tatica(mentalidade = 50)
 
     val posse = Tatica(
         velocidadeConstrucao = 25, alturaLinha = 65, intensidadePressao = 70,
         compactacao = 60, contraAtaque = 10, riscoNoPasse = 35,
+        mentalidade = 62,
+        instrucoes = setOf(
+            InstrucaoEquipe.SAIR_JOGANDO_CURTO,
+            InstrucaoEquipe.PRESSAO_APOS_PERDA,
+        ),
     )
 
     val contraAtaque = Tatica(
         velocidadeConstrucao = 85, alturaLinha = 30, intensidadePressao = 30,
         compactacao = 70, contraAtaque = 90, riscoNoPasse = 65,
+        mentalidade = 38,
+        instrucoes = setOf(InstrucaoEquipe.TIRO_LONGO_DO_GOLEIRO),
     )
 
     val pressaoAlta = Tatica(
         velocidadeConstrucao = 70, alturaLinha = 85, intensidadePressao = 90,
         compactacao = 65, contraAtaque = 40, riscoNoPasse = 60,
+        mentalidade = 78,
+        instrucoes = setOf(
+            InstrucaoEquipe.LINHA_DE_IMPEDIMENTO,
+            InstrucaoEquipe.PRESSAO_APOS_PERDA,
+        ),
     )
 
     val retranca = Tatica(
         velocidadeConstrucao = 60, alturaLinha = 15, intensidadePressao = 20,
         compactacao = 85, contraAtaque = 70, riscoNoPasse = 30,
+        mentalidade = 20,
+        instrucoes = setOf(
+            InstrucaoEquipe.TIRO_LONGO_DO_GOLEIRO,
+            InstrucaoEquipe.FAZER_CERA,
+        ),
     )
 
     val todos = listOf(

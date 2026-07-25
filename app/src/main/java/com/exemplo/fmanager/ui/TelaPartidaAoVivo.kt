@@ -119,13 +119,18 @@ fun TelaPartidaAoVivo(
                         atual.y + (alvo.y - atual.y) * k,
                     )
                 }
-                // A bola viaja mais rápido que os jogadores, mas ainda
-                // viaja: antes ela teleportava para os pés do receptor.
-                val kb = (k * 2.2f).coerceAtMost(0.45f)
-                bola = Offset(
-                    bola.x + (i.bolaX - bola.x) * kb,
-                    bola.y + (i.bolaY - bola.y) * kb,
-                )
+                /*
+                 * A bola viaja, e o tempo de viagem depende da DISTÂNCIA.
+                 * Um toque de três metros chega quase instantâneo; um
+                 * lançamento cruza o campo visivelmente. Antes era uma
+                 * taxa fixa, e por isso todo passe parecia igual.
+                 */
+                val dx = i.bolaX - bola.x
+                val dy = i.bolaY - bola.y
+                val distancia = kotlin.math.hypot(dx, dy)
+                val kb = (k * 2.4f / (0.35f + distancia * 2.2f))
+                    .coerceIn(0.05f, 0.55f)
+                bola = Offset(bola.x + dx * kb, bola.y + dy * kb)
                 passe = if (i.passeDeX != null && i.passeDeY != null)
                     Offset(i.passeDeX, i.passeDeY) else null
                 frame.intValue++
@@ -362,6 +367,25 @@ private fun PainelTaticas(
             }
         }
         Spacer(Modifier.height(16.dp))
+
+        // Mentalidade primeiro: é o ajuste que resolve mais rápido no
+        // meio de um jogo apertado.
+        Row(Modifier.fillMaxWidth()) {
+            Text("Mentalidade — ${tatica.rotuloMentalidade}", Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall, color = Texto)
+            Text("${tatica.mentalidade}",
+                style = MaterialTheme.typography.bodySmall, color = Destaque)
+        }
+        Slider(
+            value = tatica.mentalidade.toFloat(),
+            onValueChange = {
+                val nova = tatica.copy(mentalidade = it.toInt())
+                onMudar(nova)
+                partida.atualizarTatica(souMandante, nova)
+            },
+            valueRange = 0f..100f,
+        )
+        Spacer(Modifier.height(10.dp))
 
         listOf<Triple<String, Int, (Int) -> Tatica>>(
             Triple("Altura da linha", tatica.alturaLinha)

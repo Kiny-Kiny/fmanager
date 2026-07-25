@@ -101,6 +101,111 @@ sobre-humano acumulando traços.
 
 
 
+
+## Calibração do motor: o conserto dos gols
+
+O placar estava saindo alto e a causa era matemática, com **dois erros que
+se multiplicavam**.
+
+**Erro 1 — conversão de 41% por finalização.** O real é 10-11%. O modelo
+antigo calculava a chance de gol como "qualidade do atacante contra
+qualidade do goleiro":
+
+```
+probGol = qualidadeChute / (qualidadeChute + qualidadeGoleiro × 1,55)
+```
+
+Para um atacante bom contra um goleiro bom isso dava 0,41. Quatro vezes o
+real.
+
+**Erro 2 — 48% dos lances em zona adiantada viravam chute.** O razoável é
+15-20%. Time nenhum finaliza a cada dois toques no campo de ataque.
+
+Juntos: cerca de dez vezes mais gols do que deveria.
+
+### O conserto: modelo de xG
+
+O problema era conceitual. **No futebol real quem manda é a posição, não o
+atacante.** Um chute da entrada da área vale ~4% para qualquer um —
+Haaland ou um zagueiro improvisado. Um chute de dentro da pequena área vale
+~30% para qualquer um. O finalizador move esse número em ±30%, não em 400%.
+
+Então a estrutura correta ancora no xG e só tempera:
+
+```
+probabilidade = xG_da_posição
+              × fatorFinalizador   (0,55 a 1,55)
+              × fatorGoleiro       (0,70 a 1,35)
+              × fatorPressão       (0,50 a 1,00)
+              × fatorMinuto
+```
+
+O xG sai de patamares de distância reais — fora da área, entrada, dentro,
+pequena área — multiplicados pelo ângulo. Chute da linha de fundo é quase
+nada mesmo colado no gol.
+
+### Como o 0,70 foi encontrado
+
+O peso de chutar não foi chutado. Fiz uma varredura contra os números reais:
+
+| peso | finalizações | gols | conversão |
+|---|---|---|---|
+| 0,62 | 9,0 | 0,8 | 11,1% |
+| **0,70** | **13,7** | **1,1** | **8,1%** |
+| 0,80 | 15,8 | 1,2 | 8,2% |
+| 0,92 | 16,6 | 2,0 | 13,0% |
+
+0,70 acerta as finalizações. Os gols aparecem baixos porque a varredura não
+conta pênaltis, faltas e escanteios — que no motor somam ~0,3 por time.
+Fecha em ~1,4.
+
+### Aba "Motor": verifique você mesmo
+
+Em **Análise → Motor** há um botão que roda 40 partidas em segundos e
+compara suas médias com o futebol real, linha por linha. Existe porque
+"está saindo muito gol" é impossível de verificar jogando — seriam dezenas
+de partidas para formar média.
+
+Se algum número sair fora, é ali que você vê qual, e os pontos de ajuste
+estão todos em `Finalizacao.kt`.
+
+## Sistema tático: mentalidade e instruções
+
+**Mentalidade** é o controle mestre, como no FM. De 0 (muito retraída) a
+100 (muito ofensiva). Ela não substitui os sete controles contínuos: ela os
+**desloca**. `Tatica.efetiva()` aplica o deslocamento, e o motor lê sempre
+a efetiva — é isso que faz a mentalidade valer de verdade em vez de ser um
+número decorativo.
+
+**Oito instruções de equipe**, cada uma com custo real:
+
+| Instrução | Ganho | Custo |
+|---|---|---|
+| Linha de impedimento | rouba muitas bolas | expõe as costas da zaga (−8% defesa) |
+| Pressão após perda | +10% no meio | cansa muito |
+| Explorar os lados | +6% ataque | redireciona a bola pelos corredores |
+| Jogar pelo meio | +8% ataque | mais bola perdida no miolo |
+| Bola no homem-alvo | atacante recebe 80% mais | previsível |
+| Fazer cera | +8% defesa | a torcida detesta |
+| Sair jogando curto | mais posse | fatal quando falha |
+| Ligação direta | evita risco na saída | perde posse |
+
+## Passes mais fluidos
+
+Três mudanças:
+
+**Passe curto ficou muito mais provável.** O peso de proximidade passou de
+`(1 − dist)` para `(1 − dist × 1,35)`, o que gera sequência de toques em
+vez de bola pra frente.
+
+**O relógio anda menos no toque curto** (2s contra 6s do lançamento). É o
+que faz um time de posse dar 500 passes e um de ligação direta dar 300.
+
+**A bola viaja conforme a distância.** Antes a interpolação era fixa e todo
+passe parecia igual. Agora o fator é
+`k × 2,4 / (0,35 + distância × 2,2)` — toque de três metros chega quase
+instantâneo, lançamento cruza o campo visivelmente.
+
 ## Segundo lote de ideias
 
 ### moneyball-mentality (kemogu) — duas ideias, uma delas a melhor do lote

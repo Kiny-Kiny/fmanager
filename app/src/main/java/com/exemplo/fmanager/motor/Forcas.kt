@@ -1,6 +1,7 @@
 package com.exemplo.fmanager.motor
 
 import com.exemplo.fmanager.formacao.ApoioDefensivo
+import com.exemplo.fmanager.formacao.InstrucaoEquipe
 import com.exemplo.fmanager.formacao.Fase
 import com.exemplo.fmanager.formacao.Papel
 import kotlin.math.abs
@@ -22,7 +23,8 @@ internal class Forcas(time: TimeEmCampo, mandoDeCampo: Boolean) {
     val defesa: Float
     val meio: Float
     val ataque: Float
-    val tatica = time.tatica
+    /** Sempre a efetiva: a mentalidade já deslocou os valores. */
+    val tatica = time.tatica.efetiva()
     val goleiro = time.escalacao
         .firstOrNull { it.slot.em(Fase.SEM_POSSE).papel == Papel.GOL }
 
@@ -72,8 +74,21 @@ internal class Forcas(time: TimeEmCampo, mandoDeCampo: Boolean) {
         val compacta = 1f + (tatica.compactacao - 50) / 300f
         val casa = if (mandoDeCampo) VANTAGEM_CASA else 1f
 
-        defesa = d * compacta * (2f - linha) * casa
-        meio = m * pressao * compacta * casa
-        ataque = a * linha * (1f + tatica.riscoNoPasse / 300f) * casa
+        // Instruções de equipe, com o custo de cada uma.
+        val bruta = time.tatica
+        val impedimento = if (bruta.tem(InstrucaoEquipe.LINHA_DE_IMPEDIMENTO))
+            0.92f else 1f      // rouba bola, mas fica exposta
+        val contraPressao = if (bruta.tem(InstrucaoEquipe.PRESSAO_APOS_PERDA))
+            1.10f else 1f
+        val cera = if (bruta.tem(InstrucaoEquipe.FAZER_CERA)) 1.08f else 1f
+        val pelosLados = if (bruta.tem(InstrucaoEquipe.EXPLORAR_OS_LADOS))
+            1.06f else 1f
+        val peloMeio = if (bruta.tem(InstrucaoEquipe.JOGAR_PELO_MEIO))
+            1.08f else 1f
+
+        defesa = d * compacta * (2f - linha) * casa * impedimento * cera
+        meio = m * pressao * compacta * casa * contraPressao
+        ataque = a * linha * (1f + tatica.riscoNoPasse / 300f) * casa *
+                pelosLados * peloMeio
     }
 }

@@ -186,7 +186,69 @@ fun TelaTaticas(e: EstadoJogo, vm: JogoViewModel) {
                             }, { Text(nome) })
                         }
                     }
-                    Spacer(Modifier.height(20.dp))
+
+                    // MENTALIDADE: o controle mestre. Move os outros sete.
+                    Secao("Mentalidade")
+                    Surface(Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large, color = SuperficieTopo) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(t.rotuloMentalidade, Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Texto)
+                                Text("${t.mentalidade}",
+                                    style = EstiloNumeroPequeno, color = Destaque)
+                            }
+                            Slider(
+                                value = t.mentalidade.toFloat(),
+                                onValueChange = {
+                                    t = t.copy(mentalidade = it.toInt())
+                                    vm.definirTatica(t)
+                                },
+                                valueRange = 0f..100f,
+                            )
+                            Text(
+                                "Desloca linha, pressão, tempo e risco de uma " +
+                                        "vez. Os ajustes abaixo continuam valendo " +
+                                        "por cima dela.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextoFraco,
+                            )
+                        }
+                    }
+
+                    Secao("Instruções de equipe")
+                }
+
+                items(InstrucaoEquipe.entries.toList()) { inst ->
+                    val ativa = t.tem(inst)
+                    Surface(
+                        onClick = { t = t.alternar(inst); vm.definirTatica(t) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (ativa) Destaque.copy(alpha = .14f)
+                        else SuperficieAlta,
+                    ) {
+                        Row(Modifier.padding(13.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(inst.rotulo,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (ativa) Destaque else Texto)
+                                Text(inst.descricao,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextoFraco)
+                            }
+                            Switch(ativa, {
+                                t = t.alternar(inst); vm.definirTatica(t)
+                            })
+                        }
+                    }
+                }
+
+                item {
+                    Secao("Ajuste fino")
+                    Spacer(Modifier.height(4.dp))
                 }
                 item {
                     Ajuste("Velocidade de construção", t.velocidadeConstrucao,

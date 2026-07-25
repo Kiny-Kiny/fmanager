@@ -61,6 +61,8 @@ data class EstadoJogo(
     val garimpo: List<Moneyball.Achado> = emptyList(),
     val parecidos: List<Semelhanca.Parecido> = emptyList(),
     val referenciaSemelhanca: Jogador? = null,
+    val calibracao: String = "",
+    val calibrando: Boolean = false,
 )
 
 class JogoViewModel(app: Application) : AndroidViewModel(app) {
@@ -578,6 +580,81 @@ class JogoViewModel(app: Application) : AndroidViewModel(app) {
             resolvidas, Copa.ID_COPA_NACIONAL, partida.temporada,
         )
         if (proxima.isNotEmpty()) db.partidas().inserirTodas(proxima)
+    }
+
+    // ---------------------------------------------- CALIBRAÇÃO
+
+    /**
+     * Roda N partidas do seu time contra adversários reais e reporta as
+     * médias contra os números do futebol de verdade.
+     *
+     * Existe porque "está saindo muito gol" é difícil de verificar
+     * jogando: seriam dezenas de partidas para formar uma média. Aqui
+     * roda tudo em segundos e mostra se o motor está calibrado.
+     */
+    fun rodarCalibracao(partidas: Int = 40) = viewModelScope.launch {
+        val e = _estado.value
+        val clube = e.clube ?: return@launch
+        _estado.value = e.copy(calibrando = true, calibracao = "Simulando...")
+
+        val relatorio = withContext(Dispatchers.Default) {
+            val meuTime = montarTime(clube.id, clube.nome, e.elenco, e.tatica)
+                ?: return@withContext "Elenco incompleto."
+
+            val adversarios = db.clubes().porLiga(clube.ligaId)
+                .filter { it.id != clube.id }
+            if (adversarios.isEmpty()) return@withContext "Sem adversários."
+
+            var gols = 0; var chutes = 0; var noGol = 0
+            var passes = 0; var certos = 0
+            var faltas = 0; var escanteios = 0; var cartoes = 0
+            var jogos = 0
+
+            repeat(partidas) { n ->
+                val adv = adversarios[n % adversarios.size]
+                val elencoAdv = db.jogadores().elenco(adv.id)
+                val timeAdv = montarTime(
+                    adv.id, adv.nome, elencoAdv,
+                    TreinadorIA.taticaPara(adv, elencoAdv),
+                ) ?: return@repeat
+
+                val r = MotorPartida(kotlin.random.Random(n * 7919L))
+                    .simular(meuTime, timeAdv)
+
+                gols += r.golsMandante
+                chutes += r.statsMandante.chutes
+                noGol += r.statsMandante.chutesNoGol
+                passes += r.statsMandante.passes
+                certos += r.statsMandante.passesCertos
+                faltas += r.statsMandante.faltas
+                escanteios += r.statsMandante.escanteios
+                cartoes += r.statsMandante.amarelos + r.statsMandante.vermelhos
+                jogos++
+            }
+
+            if (jogos == 0) return@withContext "Nenhuma partida simulável."
+
+            fun m(v: Int) = v.toDouble() / jogos
+            val conversao = if (chutes == 0) 0.0 else gols * 100.0 / chutes
+            val precisao = if (passes == 0) 0.0 else certos * 100.0 / passes
+
+            buildString {
+                appendLine("$jogos partidas · médias do seu time por jogo")
+                appendLine()
+                appendLine("Gols            %.2f    real 1,3-1,5".format(m(gols)))
+                appendLine("Finalizações   %.1f    real 12-14".format(m(chutes)))
+                appendLine("No gol          %.1f    real 4-5".format(m(noGol)))
+                appendLine("Conversão      %.1f%%   real 10-11%%".format(conversao))
+                appendLine("Passes        %.0f    real 400-500".format(m(passes)))
+                appendLine("Precisão       %.1f%%   real 82-87%%".format(precisao))
+                appendLine("Faltas         %.1f    real 10-13".format(m(faltas)))
+                appendLine("Escanteios     %.1f    real 4-6".format(m(escanteios)))
+                appendLine("Cartões        %.1f    real 1,8-2,2".format(m(cartoes)))
+            }
+        }
+
+        _estado.value = _estado.value.copy(
+            calibrando = false, calibracao = relatorio)
     }
 
     // ------------------------------ SEMELHANÇA E DESENVOLVIMENTO
