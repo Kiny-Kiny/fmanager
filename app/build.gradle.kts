@@ -33,7 +33,26 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+
+        /*
+         * Opt-in global para as APIs experimentais do Compose.
+         *
+         * ModalBottomSheet e TopAppBar são experimentais no Material 3, e
+         * usá-las sem @OptIn é ERRO de compilação, não aviso. Isso já
+         * quebrou o build duas vezes e voltaria em cada tela nova.
+         *
+         * Declarar aqui é mais honesto que espalhar anotação por toda tela:
+         * o projeto usa essas APIs conscientemente, e a decisão fica num
+         * lugar só em vez de repetida em quinze arquivos.
+         */
+        freeCompilerArgs += listOf(
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=kotlin.RequiresOptIn",
+        )
+    }
     buildFeatures { compose = true }
 
     packaging {

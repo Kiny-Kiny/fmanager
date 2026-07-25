@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.exemplo.fmanager.ui
 
 import androidx.compose.foundation.background
