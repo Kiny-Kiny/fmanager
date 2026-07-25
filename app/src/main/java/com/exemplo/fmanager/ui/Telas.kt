@@ -41,6 +41,10 @@ fun TelaInicio(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
                 fontWeight = FontWeight.Bold, color = Texto)
             Text("Temporada ${e.carreira?.temporada} · Rodada ${e.carreira?.rodada}",
                 style = MaterialTheme.typography.bodyMedium, color = TextoFraco)
+            if (e.estiloHerdado.isNotBlank()) {
+                Text("Estilo herdado do clube: ${e.estiloHerdado}",
+                    style = MaterialTheme.typography.labelSmall, color = Destaque)
+            }
         }
 
         item {
@@ -95,10 +99,22 @@ fun TelaInicio(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
                         Text(if (emCasa) "Em casa" else "Fora de casa",
                             style = MaterialTheme.typography.titleMedium, color = Texto)
                         Spacer(Modifier.height(12.dp))
+                        val escopo = rememberCoroutineScope()
                         Button(
+                            onClick = {
+                                escopo.launch {
+                                    if (vm.prepararAoVivo(daCopa = false) != null) {
+                                        irPara("aovivo")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Assistir a partida") }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
                             onClick = { vm.jogarProximaPartida(); irPara("partida") },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Jogar partida") }
+                        ) { Text("Simular direto") }
                     }
                 }
             } ?: Text("Temporada encerrada.", color = TextoFraco)
@@ -107,8 +123,10 @@ fun TelaInicio(e: EstadoJogo, vm: JogoViewModel, irPara: (String) -> Unit) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
+                    "escalacao" to "Escalação e cartas",
                     "elenco" to "Elenco",
-                    "taticas" to "Táticas e formação",
+                    "copa" to "Copa nacional",
+                    "taticas" to "Táticas e formação por fase",
                     "mercado" to "Mercado de transferências",
                     "treino" to "Centro de treinamento",
                     "tabela" to "Classificação",

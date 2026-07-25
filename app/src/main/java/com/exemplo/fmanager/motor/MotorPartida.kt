@@ -88,8 +88,7 @@ data class Resultado(
 class MotorPartida(private val rng: Random = Random.Default) {
 
     companion object {
-        private const val MOMENTOS = 180
-        private const val VANTAGEM_CASA = 1.06f
+        internal const val MOMENTOS = 180
     }
 
     fun simular(mandante: TimeEmCampo, visitante: TimeEmCampo): Resultado {
@@ -171,75 +170,10 @@ class MotorPartida(private val rng: Random = Random.Default) {
         )
     }
 
-    // ------------------------------------------------------ FORÇAS
-
     /**
      * Agrega o time em três setores. O detalhe que importa: cada setor
      * é calculado com as posições da FASE correspondente.
      */
-    private class Forcas(time: TimeEmCampo, mandoDeCampo: Boolean) {
-        val defesa: Float
-        val meio: Float
-        val ataque: Float
-        val tatica = time.tatica
-        val goleiro = time.escalacao
-            .firstOrNull { it.slot.em(Fase.SEM_POSSE).papel == Papel.GOL }
-
-        init {
-            var d = 0f; var m = 0f; var a = 0f
-
-            time.escalacao.forEach { jc ->
-                val j = jc.jogador
-
-                // --- DEFESA: usa a forma sem a bola ---
-                val posDef = jc.slot.em(Fase.SEM_POSSE)
-                if (posDef.papel != Papel.GOL) {
-                    val peso = (1f - posDef.y).pow(1.5f)
-                    val valor = (j.consciencaDef + j.rouboBola +
-                            j.interceptacao + j.contatoFisico) / 4f
-                    val apoio = when (jc.slot.instrucoes.apoio) {
-                        ApoioDefensivo.RECUA_SEMPRE -> 1.2f
-                        ApoioDefensivo.NAO_RECUA -> 0.6f
-                        ApoioDefensivo.EQUILIBRADO -> 1f
-                    }
-                    d += valor * peso * jc.eficiencia(Fase.SEM_POSSE) *
-                            jc.mod.contribuicaoDefensiva * apoio *
-                            jc.tracos.defesa
-                }
-
-                // --- ATAQUE: usa a forma com a bola ---
-                val posAtq = jc.slot.em(Fase.COM_POSSE)
-                if (posAtq.papel != Papel.GOL) {
-                    val peso = posAtq.y.pow(1.5f)
-                    val valor = (j.finalizacao + j.posicionamento +
-                            j.drible + j.velocidade) / 4f
-                    a += valor * peso * jc.eficiencia(Fase.COM_POSSE) *
-                            jc.tracos.drible
-                }
-
-                // --- MEIO: usa a transição, o momento em que a
-                //     disputa pela bola realmente acontece ---
-                val posMei = jc.slot.em(Fase.TRANSICAO)
-                if (posMei.papel != Papel.GOL) {
-                    val peso = (1f - abs(posMei.y - 0.5f) * 2f).coerceAtLeast(0f)
-                    val valor = (j.passeBaixo + j.visao +
-                            j.controleBola + j.resistencia) / 4f
-                    m += valor * peso * jc.eficiencia(Fase.TRANSICAO) *
-                            jc.tracos.criacao
-                }
-            }
-
-            val pressao = 1f + (tatica.intensidadePressao - 50) / 250f
-            val linha = 1f + (tatica.alturaLinha - 50) / 300f
-            val compacta = 1f + (tatica.compactacao - 50) / 300f
-            val casa = if (mandoDeCampo) VANTAGEM_CASA else 1f
-
-            defesa = d * compacta * (2f - linha) * casa
-            meio = m * pressao * compacta * casa
-            ataque = a * linha * (1f + tatica.riscoNoPasse / 300f) * casa
-        }
-    }
-
     private fun probabilidadeDeChance(atq: Forcas, def: Forcas): Float {
         val base = atq.ataque / (atq.ataque + def.defesa * 1.35f)
         val bonusContra = if (def.tatica.alturaLinha > 60)

@@ -35,6 +35,36 @@ fun App(vm: JogoViewModel = viewModel()) {
 
     BackHandler(enabled = rota != "inicio") { rota = "inicio" }
 
+    // Carreira nova: escolher clube antes de qualquer coisa.
+    if (estado.precisaEscolherClube) {
+        TelaEscolherClube(
+            ligas = estado.ligas,
+            clubesDaLiga = estado.clubesDaLiga,
+            ligaSelecionada = estado.ligaSelecionada,
+            tetoReputacao = estado.tetoReputacao,
+            onEscolherLiga = { vm.selecionarLiga(it) },
+            onVoltarParaLigas = { vm.selecionarLiga(null) },
+            onEscolherClube = { vm.escolherClube(it) },
+            onClubeAleatorio = { vm.clubeAleatorio() },
+        )
+        return
+    }
+
+    // Partida ao vivo ocupa a tela inteira.
+    val aoVivo = vm.partidaAoVivo
+    if (aoVivo != null && rota == "aovivo") {
+        val e = estado
+        TelaPartidaAoVivo(
+            partida = aoVivo,
+            nomeMandante = if (vm.souMandanteAoVivo) e.clube?.nome ?: "Casa" else "Visitante",
+            nomeVisitante = if (vm.souMandanteAoVivo) "Visitante" else e.clube?.nome ?: "Fora",
+            souMandante = vm.souMandanteAoVivo,
+            taticaInicial = vm.taticaDaPartida,
+            onTerminar = { vm.encerrarAoVivo(); rota = "partida" },
+        )
+        return
+    }
+
     if (estado.carregando || estado.clube == null) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
@@ -69,6 +99,8 @@ fun App(vm: JogoViewModel = viewModel()) {
             when (rota) {
                 "inicio" -> TelaInicio(estado, vm) { rota = it }
                 "elenco" -> TelaElenco(estado)
+                "escalacao" -> TelaEscalacao(vm.slots, estado.elenco)
+                "copa" -> TelaCopa(estado, vm) { rota = it }
                 "taticas" -> TelaTaticas(estado, vm)
                 "mercado" -> TelaMercado(estado, vm)
                 "treino" -> TelaTreino(estado, vm)
@@ -81,6 +113,8 @@ fun App(vm: JogoViewModel = viewModel()) {
 
 private fun tituloDe(rota: String) = when (rota) {
     "elenco" -> "Elenco"
+    "escalacao" -> "Escalação"
+    "copa" -> "Copa"
     "taticas" -> "Táticas"
     "mercado" -> "Mercado"
     "treino" -> "Treino"

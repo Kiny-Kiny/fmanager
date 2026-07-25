@@ -63,3 +63,80 @@ object Estilos {
         "Retranca" to retranca,
     )
 }
+
+/*
+ * TÁTICA PADRÃO DO CLUBE.
+ *
+ * Cada clube que você assume já vem com um estilo, e ele não é sorteado:
+ * sai dos atributos do próprio elenco. Um time rápido e pouco técnico
+ * herda contra-ataque. Um time de bons passadores herda posse. Um elenco
+ * fraco herda retranca, porque é o que faz sentido com o que ele tem.
+ *
+ * Isso é lido uma vez, quando você assume o clube. Depois é seu.
+ */
+object TaticaDoClube {
+
+    fun derivarDe(
+        velocidadeMedia: Int,
+        passeMedio: Int,
+        forcaMedia: Int,
+        resistenciaMedia: Int,
+        geralMedio: Int,
+    ): Pair<String, Tatica> {
+
+        // Time fraco não tem como propor jogo: recua e espera.
+        if (geralMedio < 62) {
+            return "Retranca" to Estilos.retranca.copy(
+                intensidadePressao = 20 + (resistenciaMedia - 60).coerceIn(0, 20),
+                contraAtaque = 60 + (velocidadeMedia - 60).coerceIn(0, 25),
+            )
+        }
+
+        // O que mais se destaca no elenco define o estilo.
+        val perfilPasse = passeMedio - geralMedio
+        val perfilVelocidade = velocidadeMedia - geralMedio
+        val perfilFisico = ((forcaMedia + resistenciaMedia) / 2) - geralMedio
+
+        return when {
+            perfilPasse >= 2 && perfilPasse >= perfilVelocidade ->
+                "Posse de bola" to Estilos.posse.copy(
+                    riscoNoPasse = 30 + perfilPasse.coerceIn(0, 20),
+                )
+
+            perfilVelocidade >= 2 ->
+                "Contra-ataque" to Estilos.contraAtaque.copy(
+                    contraAtaque = 75 + perfilVelocidade.coerceIn(0, 20),
+                )
+
+            perfilFisico >= 2 && resistenciaMedia >= 72 ->
+                "Pressão alta" to Estilos.pressaoAlta.copy(
+                    intensidadePressao = 80 + (resistenciaMedia - 72).coerceIn(0, 15),
+                )
+
+            else -> "Equilibrado" to Estilos.equilibrado
+        }
+    }
+}
+
+/**
+ * Teto de reputação que você pode assumir nesta temporada.
+ *
+ * Começar num clube de elite tira o sentido do modo carreira. Aqui a
+ * porta abre por temporada: você prova o trabalho num clube pequeno e
+ * os grandes vão ficando ao alcance.
+ */
+fun reputacaoMaximaPara(temporada: Int): Int = when (temporada) {
+    1 -> 66
+    2 -> 72
+    3 -> 78
+    4 -> 84
+    else -> 100
+}
+
+fun descricaoDoTeto(temporada: Int): String = when (temporada) {
+    1 -> "Primeira temporada: clubes até reputação 66"
+    2 -> "Segunda temporada: clubes até reputação 72"
+    3 -> "Terceira temporada: clubes até reputação 78"
+    4 -> "Quarta temporada: clubes até reputação 84"
+    else -> "Sem restrição — todos os clubes ao alcance"
+}

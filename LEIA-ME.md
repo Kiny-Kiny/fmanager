@@ -96,6 +96,77 @@ Os PlayStyles entram no motor por categoria — finalização, criação,
 defesa, resistência, drible — com teto de +32% para ninguém virar
 sobre-humano acumulando traços.
 
+
+## Partida ao vivo
+
+Dois laços rodam em paralelo na tela da partida:
+
+- o **laço de simulação** chama `partida.passo()` no ritmo escolhido
+- o **laço de animação** desliza as peças para o alvo a 60fps
+
+As posições das peças **não são inventadas** — vêm direto do editor de
+fases. Quando seu time tem a bola, as peças caminham para as coordenadas
+de `COM_POSSE`; quando defende, para `SEM_POSSE`. Você vê a 4-2-3-1
+virar 3-2-5 em tempo real, porque é literalmente a mesma estrutura de
+dados que você desenhou.
+
+Velocidades: 4 minutos, 2 minutos, 30 segundos, ou **Pular** (resolve
+tudo instantaneamente). Pausar a qualquer momento. O botão **Táticas**
+abre os controles no meio do jogo — a mudança recalcula as forças e vale
+do próximo lance em diante.
+
+**Performance:** as posições animadas ficam num `HashMap` comum, fora do
+sistema de estado do Compose. O redesenho é disparado por um único
+contador lido dentro do `Canvas`, então a cada frame roda só a fase de
+desenho, não a de composição. Sem isso, 22 peças a 60fps recomporiam a
+tela inteira 60 vezes por segundo.
+
+## Escolha de clube
+
+Carreira nova começa pela escolha: navega liga → clube, com força do
+elenco, caixa e teto salarial à vista.
+
+**Você não pode começar num clube de elite.** O teto de reputação sobe
+por temporada (66 → 72 → 78 → 84 → livre), então você prova o trabalho
+num clube pequeno e os grandes vão ficando ao alcance. Tem também o
+botão **"Sortear um clube pra mim"**, no espírito do Soccer Champs.
+
+O teto sai de `reputacaoMaximaPara()` em `Tatica.kt` — se quiser começar
+solto, é só devolver 100 ali.
+
+### Tática herdada
+
+O clube que você assume **já vem com um estilo**, e ele não é sorteado:
+sai dos atributos do próprio elenco, em `TaticaDoClube.derivarDe()`.
+
+- elenco de bons passadores → **Posse de bola**
+- elenco rápido → **Contra-ataque**
+- elenco físico e resistente → **Pressão alta**
+- elenco fraco (geral < 62) → **Retranca**
+
+Aparece na tela inicial como "Estilo herdado do clube". A partir daí é
+seu para mexer.
+
+## Escalação com as cartas
+
+O campo mostra os 11 com a imagem da carta vinda da API. Tocar num slot
+abre o elenco **ordenado pelo rendimento naquela função específica**, com
+a familiaridade de cada um. Se você escolher alguém que já está escalado,
+os dois trocam de lugar.
+
+A moldura do número conta a história: verde se ele joga ali, laranja se é
+adaptação, vermelho se é gambiarra.
+
+## Copa nacional
+
+Eliminatória em jogo único rodando em paralelo à liga. Chaveamento com
+cabeças de chave (1º x último), fases geradas conforme os vencedores
+aparecem. Empate é decidido pelo mando de campo — aproximação simples
+para a disputa de pênaltis.
+
+As rodadas de copa são numeradas a partir de 1000 para não colidir com
+as da liga na mesma tabela.
+
 ## Formação por fase (o sistema principal)
 
 Cada jogador guarda **uma posição por fase de jogo**, não uma posição só:
@@ -178,6 +249,8 @@ entre fases chega ao fim do jogo sem pernas — e o risco de lesão sobe.
 
 ## O que falta
 
+- Competições continentais (a estrutura de copa já suporta, falta popular)
+- Substituições durante a partida
 - Salvar a formação no banco — hoje ela vive só na memória
 - Renovação de contrato e jogadores livres
 - Passagem de temporada (promoção, rebaixamento, envelhecimento do elenco)
